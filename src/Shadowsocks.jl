@@ -55,9 +55,9 @@ mutable struct Cipher
 end
 Cipher() = Cipher(
     "AES-256-CFB", 
-    rand(UInt8, METHOD["AES-256-CFB"]["KEYLEN"]), 
-    rand(UInt8, METHOD["AES-256-CFB"]["IVLEN"]),
-    rand(UInt8, METHOD["AES-256-CFB"]["IVLEN"]),
+    [0x00; ], 
+    [0x00; ],
+    [0x00; ],
     () -> nothing, 
     () -> nothing
 )
@@ -146,7 +146,7 @@ end
 
 function handShake(payload::Bytes)
     if !(payload[1] in [0x01; 0x03; 0x04])
-        return "", "", ""
+        return "", "", "", ""
     end
 
     host = nothing
@@ -211,7 +211,6 @@ function handleConnection(ssConn::SSConn)
         close(ssConn.conn)
         return
     end
-    @show host port
 
     isopen(client) && write(client, data)
 
@@ -222,8 +221,8 @@ function handleConnection(ssConn::SSConn)
         return
     end
 
-    data, err = encrypt(buff[1:nbytes], ssConn.cipher)
     ssConn.cipher.iv2 = rand(UInt8, length(ssConn.cipher.iv2))
+    data, err = encrypt(buff[1:nbytes], ssConn.cipher)
     isopen(ssConn.conn) && write(ssConn.conn, [ssConn.cipher.iv2; [0x01, ]; toIP(getipaddr()); toPort(0); data])
 
     @async begin
@@ -235,7 +234,6 @@ function handleConnection(ssConn::SSConn)
                 continue
             end
 
-            println("in = ", nbytes, " ", err)
             data, err = decrypt(buff_in[1:nbytes], ssConn.cipher)
             if err != nothing
                 continue
@@ -256,7 +254,6 @@ function handleConnection(ssConn::SSConn)
                 continue
             end
 
-            println("out= ", nbytes, " ", err)
             data, err = encrypt(buff_out[1:nbytes], ssConn.cipher)
             if err != nothing
                 continue
@@ -284,7 +281,6 @@ function run(config::SSServer)
 
     while isopen(server)
         conn = accept(server)
-        @show conn
         @async handleConnection(SSConn(conn, cipher))
     end
 end
