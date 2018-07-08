@@ -8,4 +8,26 @@ end
 # write your own tests here
 @test 1 == 1
 
-# @test String(Shadowsocks.getkey(Shadowsocks.AES256CFB, take!(IOBuffer("imgk1234"))))
+
+false && begin
+
+using Shadowsocks; 
+@async run(SSServer())
+using Shadowsocks; 
+@async run(SSClient())
+
+server = listen(2000)
+@async conn = accept(server)
+
+using Shadowsocks
+using Base.Test
+client = connect(getipaddr(), 1080)
+write(client, [0x05; 0x01; 0x00])
+@test readavailable(client) == [0x05; 0x00]
+write(client, [0x01; 0x01; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); Shadowsocks.toPort(2000)])
+@test readavailable(client) == [0x05; 0x00; 0x00; 0x01; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00]
+
+close(conn)
+close(client)
+
+end

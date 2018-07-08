@@ -1,4 +1,5 @@
 julia 0.6
 MD5
 AES
+SHA
 LegacyStrings
