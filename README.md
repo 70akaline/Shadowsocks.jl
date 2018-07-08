@@ -7,4 +7,4 @@
 [![codecov.io](http://codecov.io/github/imgk/Shadowsocks.jl/coverage.svg?branch=master)](http://codecov.io/github/imgk/Shadowsocks.jl?branch=master)
 
 
-not finished yet
+A Julia implementation of Shadowsocks. Not compatible with Origin Shadowsocks for now.
