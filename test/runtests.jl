@@ -11,13 +11,20 @@ end
 
 false && begin
 
-using Shadowsocks; 
-@async run(SSServer())
-using Shadowsocks; 
-@async run(SSClient())
-
+using Shadowsocks; run(SSServer())
+using Shadowsocks; run(SSClient())
 server = listen(2000)
 @async conn = accept(server)
+write(client, b"Julia")
+String(readavailable(conn))
+close(conn)
+
+end
+
+using Shadowsocks
+@async run(SSServer())
+using Shadowsocks
+@async run(SSClient())
 
 using Shadowsocks
 using Base.Test
@@ -26,8 +33,4 @@ write(client, [0x05; 0x01; 0x00])
 @test readavailable(client) == [0x05; 0x00]
 write(client, [0x01; 0x01; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); Shadowsocks.toPort(2000)])
 @test readavailable(client) == [0x05; 0x00; 0x00; 0x01; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00]
-
-close(conn)
 close(client)
-
-end
