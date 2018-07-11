@@ -2,6 +2,12 @@
 *.jl.*.cov
 *.jl.mem
 
+# required libs
+*.dylib
+*.dll
+*.so
+*.so.*
+
 # General
 .DS_Store
 .AppleDouble

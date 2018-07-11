@@ -6,10 +6,8 @@ module Shadowsocks
 
 export SSServer, SSClient, run
 
-using MD5 # https://github.com/oxinabox/MD5.jl.git
 using AES # https://github.com/faf0/AES.jl.git
 using LegacyStrings # https://github.com/JuliaStrings/LegacyStrings.jl.git
-using SHA # https://github.com/staticfloat/SHA.jl.git
 
 import Base.run
 import Base.read
@@ -39,6 +37,35 @@ end
 
 function toIP(ip)
     return hex2bytes(num2hex(ip.host))
+end
+
+macro dlsym(func, lib)
+    z, zlocal = gensym(string(func)), gensym()
+    eval(current_module(), :(global $z = C_NULL))
+    z = esc(z)
+    quote
+        let $zlocal::Ptr{Void} = $z::Ptr{Void}
+            if $zlocal == C_NULL
+                $zlocal = Libdl.dlsym($(esc(lib))::Ptr{Void}, $(esc(func)))
+                global $z = $zlocal
+            end
+                $zlocal
+        end
+    end
+end
+
+dir = Pkg.dir("Shadowsocks")
+libcrypto = Libdl.dlopen(joinpath(dir, "libs", "libcrypto"))
+md5hash = @dlsym("md5hash", libcrypto)
+encryptor = @dlsym("encrypt", libcrypto)
+decryptor = @dlsym("decrypt", libcrypto)
+
+macro Md5(buff, text)
+    return :(ccall(md5hash, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), $buff, $text, Csize_t(sizeof($text))))
+end
+
+function md5(buff, text)
+    return ccall(md5hash, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), buff, Array{Cuchar}(text), Csize_t(sizeof(text)))
 end
 
 mutable struct SSConfig
@@ -85,12 +112,13 @@ function getkeys(method::String, str::String)
     cnt = Integer(floor((keylen-1)/md5len)) + 1
     m = Bytes(cnt * md5len)
     
-    md5hash = md5(password)
-    m[1:md5len] = md5hash
+    buff = Array{Cuchar}(16)
+    md5(buff, password)
+    m[1:md5len] = buff
 
     for i in 2:1:cnt
-        md5hash = md5([md5hash; password])
-        m[md5len * (i-1) + 1 : md5len * i] = md5hash
+        md5(buff, [buff; password])
+        m[md5len * (i-1) + 1 : md5len * i] = buff
     end
     return m[1:keylen]
 end
@@ -297,10 +325,10 @@ function handShake(conn::TCPSocket)
     end
 
     if 0x00 in buff[3:end]
-        write(conn, [0x05; 0x00])
-        return true
+        isopen(conn) && begin write(conn, [0x05; 0x00]); return true; end
+        return false
     else 
-        write(conn, [0x05; 0xFF])
+        isopen(conn) && write(conn, [0x05; 0xFF])
         return false
     end
 
