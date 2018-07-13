@@ -19,15 +19,22 @@ import Base.read
 import Base.write
 
 # include("libShadowsocks.jl")
-const Bytes     = Array{UInt8}
-const CodeSet   = Bytes("1234567890QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm")
-const libcrypto = Libdl.dlopen(joinpath(Pkg.dir("Shadowsocks"), "libs", "libcrypto"))
-const METHOD    = Dict{String, Dict{String, Integer}}(
+const Bytes        = Array{UInt8}
+const CodeSet      = Bytes("1234567890QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm")
+const Buffer_len   = 65536
+const Libcrypto    = Libdl.dlopen(joinpath(Pkg.dir("Shadowsocks"), "libs", "libcrypto"))
+const METHOD       = Dict{String, Dict{String, Integer}}(
     "CHACHA20-POLY1305"       => Dict{String, Integer}("TYPE" => Cuchar(1), "KEYLEN" => 32, "IVLEN" => 8),
     "CHACHA20-POLY1305-IETF"  => Dict{String, Integer}("TYPE" => Cuchar(2), "KEYLEN" => 32, "IVLEN" => 12),
     "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("TYPE" => Cuchar(3), "KEYLEN" => 32, "IVLEN" => 24),
     "AES-256-GCM"             => Dict{String, Integer}("TYPE" => Cuchar(4), "KEYLEN" => 32, "IVLEN" => 12)
 )
+
+macro Log(message)
+    quote
+        println(STDOUT, Dates.now(), " : ", $message)
+    end
+end
 
 macro GenPass(len)
     quote
@@ -70,18 +77,18 @@ macro dlsym(func, lib)
     end
 end
 
-const md5hash   = @dlsym("md5hash", libcrypto)
-const encryptor = @dlsym("encrypt", libcrypto)
-const decryptor = @dlsym("decrypt", libcrypto)
+const MD5Func   = @dlsym("md5hash", Libcrypto)
+const Encryptor = @dlsym("encrypt", Libcrypto)
+const Decryptor = @dlsym("decrypt", Libcrypto)
 
 macro Md5(buff, text)
     quote
-        ccall(md5hash, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), $buff, Array{Cuchar}($text), Csize_t(sizeof($text)))
+        ccall(MD5Func, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), $buff, Array{Cuchar}($text), Csize_t(sizeof($text)))
     end
 end
 
 function md5(buff, text)
-    return ccall(md5hash, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), buff, Array{Cuchar}(text), Csize_t(sizeof(text)))
+    return ccall(MD5Func, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), buff, Array{Cuchar}(text), Csize_t(sizeof(text)))
 end
 
 mutable struct SSConfig
@@ -121,25 +128,25 @@ mutable struct SSConn
     debuff::Bytes
     enbuff::Bytes
 end
-SSConn(socket, cipher) = SSConn(socket, cipher, Bytes(65536), Bytes(65536))
+SSConn(socket, cipher) = SSConn(socket, cipher, Bytes(Buffer_len), Bytes(Buffer_len))
 SSConn() = SSConn(TCPSocket(), Cipher())
 
 function getkeys(method::String, str::String)
-    const md5len = 16
+    const MD5Len = 16
 
     password = Bytes(str)
     keylen = METHOD[method]["KEYLEN"]
 
-    cnt = Integer(floor((keylen-1)/md5len)) + 1
-    m = Bytes(cnt * md5len)
+    cnt = Integer(floor((keylen-1)/MD5Len)) + 1
+    m = Bytes(cnt * MD5Len)
     
-    buff = Array{Cuchar}(16)
+    buff = Array{Cuchar}(MD5Len)
     md5(buff, password)
-    m[1:md5len] = buff
+    m[1:MD5Len] = buff
 
     for i in 2:1:cnt
         md5(buff, [buff; password])
-        m[md5len * (i-1) + 1 : md5len * i] = buff
+        m[MD5Len * (i-1) + 1 : MD5Len * i] = buff
     end
     return m[1:keylen]
 end
@@ -165,6 +172,7 @@ function read(io::TCPSocket, buff::Bytes)
     end
 
     nbytes = nb_available(io)
+    nbytes > 64512 ? nbytes = 64512 : nothing
     isa(nbytes, Integer) && if nbytes != 0
         try 
             readbytes!(io, buff, nbytes)
@@ -204,7 +212,7 @@ end
 
 function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, cipher::Cipher)
     nbytes = ccall(
-        decryptor,
+        Decryptor,
         Csize_t,
         (Ref{Cuchar}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}, Cuchar),
         buff, ciphertext, ciphertext_len, cipher.add_text, cipher.add_text_len, cipher.key, cipher.deiv, cipher.ctype)
@@ -215,7 +223,7 @@ end
 
 function encrypt(buff::Bytes, text::Bytes, text_len::Integer, cipher::Cipher)
     nbytes = ccall(
-        encryptor, 
+        Encryptor, 
         Csize_t, 
         (Ref{Cuchar}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}, Cuchar), 
         buff, text, text_len, cipher.add_text, cipher.add_text_len, cipher.key, cipher.eniv, cipher.ctype)
@@ -284,9 +292,9 @@ function handleConnection(ssConn::SSConn)
         return
     end
 
-    const ivlen = METHOD[ssConn.cipher.method]["IVLEN"]
-    ssConn.cipher.deiv = buff[1:ivlen]
-    nbytes, err = decrypt(buff, buff[ivlen+1:nbytes], nbytes-ivlen, ssConn.cipher)
+    const IVLen = METHOD[ssConn.cipher.method]["IVLEN"]
+    ssConn.cipher.deiv = buff[1:IVLen]
+    nbytes, err = decrypt(buff, buff[IVLen+1:nbytes], nbytes-IVLen, ssConn.cipher)
     if err != nothing
         close(ssConn.conn)
         return
@@ -298,19 +306,22 @@ function handleConnection(ssConn::SSConn)
         return
     end
 
-    ssConn.cipher.eniv = rand(UInt8, ivlen)
+    ssConn.cipher.eniv = rand(UInt8, IVLen)
     isopen(ssConn.conn) && write(ssConn.conn, ssConn.cipher.eniv)
 
     buff = nothing
     @async begin
-        buff_in = Bytes(65536)
+        buff_in = Bytes(Buffer_len)
         while isopen(ssConn.conn) && isopen(client)
             nbytes, err = read(ssConn, buff_in)
             if err != nothing
                 continue
             end
 
-            isopen(client) && write(client, buff_in[1:nbytes])
+            isopen(client) && try 
+                write(client, buff_in[1:nbytes])
+            catch err
+            end
         end
 
         close(client)
@@ -318,14 +329,17 @@ function handleConnection(ssConn::SSConn)
     end
 
     begin
-        buff_out = Bytes(65536)
+        buff_out = Bytes(Buffer_len)
         while isopen(ssConn.conn) && isopen(client)
             nbytes, err = read(client, buff_out)
             if err != nothing
                 continue
             end
 
-            isopen(ssConn.conn) && write(ssConn, buff_out, nbytes)
+            isopen(ssConn.conn) && try 
+                write(ssConn, buff_out, nbytes)
+            catch err
+            end
         end
 
         close(client)
@@ -413,22 +427,26 @@ function handleConnection(conn::TCPSocket, config::SSConfig)
         return
     end
 
-    const ivlen = METHOD[ssConn.cipher.method]["IVLEN"]
-    ssConn.cipher.deiv = buff[1:ivlen]
+    const IVLen = METHOD[ssConn.cipher.method]["IVLEN"]
+    ssConn.cipher.deiv = buff[1:IVLen]
 
-    if ivlen != nbytes
+    if IVLen != nbytes
+        nothing
     end
 
     buff = nothing
     @async begin
-        buff_in = Bytes(65536)
+        buff_in = Bytes(Buffer_len)
         while isopen(conn) && isopen(ssConn.conn)
             nbytes, err = read(conn, buff_in)
             if err != nothing
                 continue
             end
 
-            isopen(ssConn.conn) && write(ssConn, buff_in, nbytes)
+            isopen(ssConn.conn) && try 
+                write(ssConn, buff_in, nbytes)
+            catch err
+            end
         end
 
         close(conn)
@@ -436,14 +454,17 @@ function handleConnection(conn::TCPSocket, config::SSConfig)
     end
 
     begin
-        buff_out = Bytes(65536)
+        buff_out = Bytes(Buffer_len)
         while isopen(ssConn.conn) && isopen(conn)
             nbytes, err = read(ssConn, buff_out)
             if err != nothing
                 continue
             end
 
-            isopen(conn) && write(conn, buff_out[1:nbytes])
+            isopen(conn) && try 
+                write(conn, buff_out[1:nbytes])
+            catch err
+            end
         end
 
         close(conn)
