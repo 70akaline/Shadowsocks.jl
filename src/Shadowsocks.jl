@@ -30,42 +30,18 @@ const METHOD       = Dict{String, Dict{String, Integer}}(
     "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("TYPE" => Cuchar(3), "KEYLEN" => 32, "TAGLEN" => 16, "IVLEN" => 24),
     "AES-256-GCM"             => Dict{String, Integer}("TYPE" => Cuchar(4), "KEYLEN" => 32, "TAGLEN" => 16, "IVLEN" => 12)
 )
+const CError       = 0xffffffffffffffff
+const MD5Len       = 16
 
-macro Log(message)
+macro log(message)
     quote
         println(STDOUT, Dates.now(), " : ", $message)
     end
 end
 
-macro GenPass(len)
+macro genPass(len)
     quote
     	String(rand(CodeSet, $len))
-    end
-end
-
-macro ToPort(p)
-    quote
-        hex2bytes(num2hex($p))[end-1:1:end]
-    end
-end
-
-function toPort(p)
-    return hex2bytes(num2hex(p))[end-1:1:end]
-end
-
-macro ToIP(ip)
-    quote
-        hex2bytes(num2hex(($ip).host))
-    end
-end
-
-function toIP(ip)
-    return hex2bytes(num2hex(ip.host))
-end
-
-macro RandByte(num)
-    quote
-        rand(UInt8, $num)
     end
 end
 
@@ -84,14 +60,16 @@ macro dlsym(func, lib)
     end
 end
 
-const MD5Func   = @dlsym("md5hash", Libcrypto)
-const Encryptor = @dlsym("encrypt", Libcrypto)
-const Decryptor = @dlsym("decrypt", Libcrypto)
+const MD5Func     = @dlsym("md5hash", Libcrypto)
+const EncryptFunc = @dlsym("encrypt", Libcrypto)
+const DecryptFunc = @dlsym("decrypt", Libcrypto)
 
-macro Md5(buff, text)
-    quote
-        ccall(MD5Func, Int64, (Ref{Cuchar}, Ref{Cuchar}, Csize_t), $buff, Array{Cuchar}($text), Csize_t(sizeof($text)))
-    end
+function toPort(p)
+    return hex2bytes(num2hex(UInt16(p)))
+end
+
+function toIP(ip)
+    return hex2bytes(num2hex(ip.host))
 end
 
 function md5(buff, text)
@@ -115,38 +93,37 @@ mutable struct Cipher
     add_text::Bytes
     add_text_len::Csize_t
     key::Bytes
+    key_len::Csize_t
     deiv::Bytes
     eniv::Bytes
+    iv_len::Csize_t
     ctype::Cuchar
     isBlock::Bool
     tagLength::Union{Integer, Bool}
+    aead_length_buff::Union{Bytes, Bool}
 end
 Cipher() = Cipher(
     "method", 
     [0x00; ], 
     Csize_t(0),
     [0x00; ],
+    Csize_t(0),
     [0x00; ],
     [0x00; ],
+    Csize_t(0),
     Cuchar(0),
     false,
-    0
-)
+    false,
+    false)
 
-mutable struct SSConn
+mutable struct SSConnection
     conn::TCPSocket
     cipher::Cipher
-    debuff::Bytes
-    enbuff::Bytes
 end
-SSConn(socket, cipher) = SSConn(socket, cipher, Bytes(Buffer_Len), Bytes(Buffer_Len))
-SSConn() = SSConn(TCPSocket(), Cipher())
+SSConnection() = SSConnection(TCPSocket(), Cipher())
 
-function getkeys(method::String, str::String)
-    const MD5Len = 16
-
+function getkeys(keylen::Csize_t, str::String)
     password = Bytes(str)
-    keylen = METHOD[method]["KEYLEN"]
 
     cnt = Integer(floor((keylen-1)/MD5Len)) + 1
     m = Bytes(cnt * MD5Len)
@@ -167,15 +144,18 @@ function parseCipher(config::SSConfig)
     cipher.method = config.method
     cipher.add_text = Bytes(config.password)
     cipher.add_text_len = Csize_t(sizeof(config.password))
-    cipher.key = getkeys(cipher.method, config.password)
-    cipher.deiv = rand(UInt8, METHOD[config.method]["IVLEN"])
-    cipher.eniv = rand(UInt8, METHOD[config.method]["IVLEN"])
+    cipher.key_len = METHOD[config.method]["KEYLEN"]
+    cipher.key = getkeys(cipher.key_len, config.password)
+    cipher.iv_len = METHOD[config.method]["IVLEN"]
+    cipher.deiv = rand(UInt8, cipher.iv_len)
+    cipher.eniv = rand(UInt8, cipher.iv_len)
     cipher.ctype = METHOD[config.method]["TYPE"]
 
     if config.method in ["CHACHA20-POLY1305"; "CHACHA20-POLY1305-IETF"; 
                 "XCHACHA20-POLY1305-IETF"; "AES-256-GCM"]
         cipher.isBlock = true
         cipher.tagLength = METHOD[config.method]["TAGLEN"]
+        cipher.aead_length_buff = rand(UInt8, 2+cipher.tagLength)
     else 
         cipher.isBlock = false
     end
@@ -201,18 +181,28 @@ function read(io::TCPSocket, buff::Bytes)
     return nbytes, nothing
 end
 
-function read(io::TCPSocket, buff::Bytes, num::Integer)
+function read(io::TCPSocket, buff::Bytes, n_byte::Integer)
     try
         eof(io)
     catch err
         return nothing, err
     end
 
-    nbytes = nb_available(io)
-    if nbytes >= num
-        nbytes = num
-    else
-        return nothing, ""
+    nbytes = nothing
+    while true
+        nbytes = try 
+            nb_available(io)
+        catch err
+            return nothing, err
+        end
+
+        if nbytes >= n_byte
+            nbytes = n_byte
+            break
+        else
+            sleep(0.001)
+            continue
+        end
     end
 
     try
@@ -224,42 +214,24 @@ function read(io::TCPSocket, buff::Bytes, num::Integer)
     return nbytes, nothing
 end
 
-function read_aead(ssConn::SSConn, buff::Bytes)
-    nbytes, err = read(ssConn.conn, ssConn.debuff, 2+ssConn.cipher.tagLength)
-    if err != nothing
-        return nothing, ""
-    end
-
-    nbytes, err = decrypt(buff, ssConn.debuff, nbytes, ssConn.cipher)
+function read_aead(ssConn::SSConnection, buff::Bytes)
+    nbytes, err = read(ssConn.conn, buff, 2 + ssConn.cipher.tagLength)
     if err != nothing
         return nothing, err
     end
 
-    nbytes, err = read(ssConn.conn, ssConn.debuff, buff[1]*256 + buff[2] + ssConn.cipher.tagLength)
+    nbytes, err = decrypt(buff, buff, nbytes, ssConn.cipher)
     if err != nothing
-        return nothing, ""
+        @log "decrypt error"
+        return nothing, err
     end
 
-    nbytes, err = decrypt(buff, ssConn.debuff, nbytes, ssConn.cipher)
+    nbytes, err = read(ssConn.conn, buff, buff[1]*256 + buff[2] + ssConn.cipher.tagLength)
     if err != nothing
         return nothing, err
     end
 
-    return nbytes, nothing
-end
-
-function write_aead(ssConn::SSConn, message::Bytes, nbytes::Integer)
-    write_not_aead(ssConn, hex2bytes(num2hex(UInt16(nbytes))), 2)
-    write_not_aead(ssConn, message, nbytes)
-end
-
-function read_not_aead(ssConn::SSConn, buff::Bytes)
-    nbytes, err = read(ssConn.conn, ssConn.debuff)
-    if err != nothing
-        return nothing, err
-    end
-
-    nbytes, err = decrypt(buff, ssConn.debuff, nbytes, ssConn.cipher)
+    nbytes, err = decrypt(buff, buff, nbytes, ssConn.cipher)
     if err != nothing
         return nothing, err
     end
@@ -267,51 +239,85 @@ function read_not_aead(ssConn::SSConn, buff::Bytes)
     return nbytes, nothing
 end
 
-function write_not_aead(ssConn::SSConn, message::Bytes, nbytes::Integer)
-    nbytes, err = encrypt(ssConn.enbuff, message, nbytes, ssConn.cipher)
+function read_stream(ssConn::SSConnection, buff::Bytes)
+    nbytes, err = read(ssConn.conn, buff)
+    if err != nothing
+        return nothing, err
+    end
+
+    nbytes, err = decrypt(buff, buff, nbytes, ssConn.cipher)
+    if err != nothing
+        return nothing, err
+    end
+
+    return nbytes, nothing
+end
+
+function write_aead(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+    ssConn.cipher.aead_length_buff[1:2] = hex2bytes(num2hex(UInt16(nbytes)))
+    err = write_stream(ssConn, ssConn.cipher.aead_length_buff, 2)
     if err != nothing
         return err
     end
 
-    write(ssConn.conn, ssConn.enbuff[1:nbytes])
+    err = write_stream(ssConn, buff, nbytes)
+    if err != nothing 
+        return err
+    end
+
+    return nothing
+end
+
+function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+    nbytes, err = encrypt(buff, buff, nbytes, ssConn.cipher)
+    if err != nothing
+        return err
+    end
+
+    isopen(ssConn.conn) && try 
+        write(ssConn.conn, buff[1:nbytes])
+    catch err
+        return err
+    end
     return nothing
 end
 
 function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, cipher::Cipher)
     nbytes = ccall(
-        Decryptor,
+        DecryptFunc,
         Csize_t,
         (Ref{Cuchar}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}, Cuchar),
         buff, ciphertext, ciphertext_len, cipher.add_text, cipher.add_text_len, cipher.key, cipher.deiv, cipher.ctype)
 
-    nbytes == 0xffffffffffffffff && return nothing, ""
+    nbytes == CError && return nothing, ""
     return nbytes, nothing
 end
 
 function encrypt(buff::Bytes, text::Bytes, text_len::Integer, cipher::Cipher)
     nbytes = ccall(
-        Encryptor, 
+        EncryptFunc, 
         Csize_t, 
         (Ref{Cuchar}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}, Cuchar), 
         buff, text, text_len, cipher.add_text, cipher.add_text_len, cipher.key, cipher.eniv, cipher.ctype)
 
-    nbytes == 0xffffffffffffffff && return nothing, ""
+    nbytes == CError && return nothing, ""
     return nbytes, nothing
 end
 
-function ioCopy(ssConn::SSConn, conn::TCPSocket)
+function ioCopy(ssConn::SSConnection, conn::TCPSocket)
     buff = Bytes(Buffer_Len)
     ssRead = nothing
-    ssConn.cipher.isBlock ? ssRead = read_aead : ssRead = read_not_aead
+    ssConn.cipher.isBlock ? ssRead = read_aead : ssRead = read_stream
     while isopen(conn) && isopen(ssConn.conn)
         nbytes, err = ssRead(ssConn, buff)
         if err != nothing
-            continue
+            break
         end
 
         isopen(conn) && try
             write(conn, buff[1:nbytes])
         catch err
+            break
         end
     end
 
@@ -319,19 +325,21 @@ function ioCopy(ssConn::SSConn, conn::TCPSocket)
     close(conn)
 end
 
-function ioCopy(conn::TCPSocket, ssConn::SSConn)
+function ioCopy(conn::TCPSocket, ssConn::SSConnection)
     buff = Bytes(Buffer_Len)
     ssWrite = nothing
-    ssConn.cipher.isBlock ? ssWrite = write_aead : ssWrite = write_not_aead
+    ssConn.cipher.isBlock ? ssWrite = write_aead : ssWrite = write_stream
     while isopen(ssConn.conn) && isopen(conn)
         nbytes, err = read(conn, buff)
         if err != nothing
-            continue
+            break
         end
 
-        isopen(ssConn.conn) && try
-            ssWrite(ssConn, buff, nbytes)
-        catch err
+        isopen(ssConn.conn) && begin
+            err = ssWrite(ssConn, buff, nbytes)
+            if err != nothing 
+                break
+            end
         end
     end
 
@@ -340,9 +348,9 @@ function ioCopy(conn::TCPSocket, ssConn::SSConn)
 end
 
 # include("Server.jl")
-function parseHost(payload::Bytes)
+function connectRemote(payload::Bytes)
     if !(payload[1] in [0x01; 0x03; 0x04])
-        return nothing, nothing, ""
+        return nothing, ""
     end
 
     host = nothing
@@ -360,24 +368,11 @@ function parseHost(payload::Bytes)
     end
 
     payload[1] == 0x04 && begin
-        host = IPv6(payload[2] * 256 + payload[3],
-            payload[4]  * 256 + payload[5],
-            payload[6]  * 256 + payload[7],
-            payload[8]  * 256 + payload[9],
-            payload[10] * 256 + payload[11],
-            payload[12] * 256 + payload[13],
-            payload[14] * 256 + payload[15],
-            payload[16] * 256 + payload[17])
+        host = IPv6(payload[2] * 256 + payload[3], payload[4]  * 256 + payload[5],
+            payload[6]  * 256 + payload[7], payload[8]  * 256 + payload[9],
+            payload[10] * 256 + payload[11], payload[12] * 256 + payload[13],
+            payload[14] * 256 + payload[15], payload[16] * 256 + payload[17])
         port = payload[18] * 256 + payload[19]
-    end
-
-    return host, port, nothing
-end
-
-function connectRemote(payload::Bytes)
-    host, port, err = parseHost(payload)
-    if err != nothing
-        return nothing, err
     end
 
     client = try
@@ -389,8 +384,7 @@ function connectRemote(payload::Bytes)
     return client, nothing
 end
 
-function handleSSConnection(ssConn::SSConn)
-    const IVLen = METHOD[ssConn.cipher.method]["IVLEN"]
+function handleSSConnection(ssConn::SSConnection)
     buff = Bytes(1024)
 
     nbytes, err = read(ssConn.conn, buff)
@@ -399,8 +393,12 @@ function handleSSConnection(ssConn::SSConn)
         return
     end
 
-    ssConn.cipher.deiv = buff[1:IVLen]
-    nbytes, err = decrypt(buff, buff[IVLen+1:nbytes], nbytes-IVLen, ssConn.cipher)
+    ssConn.cipher.deiv = buff[1:ssConn.cipher.iv_len]
+    nbytes, err = try 
+        decrypt(buff, buff[ssConn.cipher.iv_len+1:nbytes], nbytes-ssConn.cipher.iv_len, ssConn.cipher)
+    catch err
+        return
+    end
     if err != nothing
         close(ssConn.conn)
         return
@@ -412,7 +410,7 @@ function handleSSConnection(ssConn::SSConn)
         return
     end
 
-    ssConn.cipher.eniv = rand(UInt8, IVLen)
+    ssConn.cipher.eniv = rand(UInt8, ssConn.cipher.iv_len)
     isopen(ssConn.conn) && write(ssConn.conn, ssConn.cipher.eniv)
 
     buff = nothing
@@ -433,40 +431,29 @@ function handShake(conn::TCPSocket, buff::Bytes)
     end
 
     if 0x00 in buff[3:nbytes]
-        isopen(conn) && begin write(conn, [0x05; 0x00]); return true; end
-        return false
+        isopen(conn) && write(conn, [0x05; 0x00])
     else 
         isopen(conn) && write(conn, [0x05; 0xFF])
         return false
     end
 
-    return false
-end
-
-function getRequest(conn::TCPSocket, buff::Bytes)
     nbytes, err = read(conn, buff)
     if err != nothing
-        return nothing, err
+        return false
     end
 
     if buff[2] != 0x01
-        return nothing, ""
+        return false
     end
 
-    return buff[4:nbytes], nothing
+    return buff[4:nbytes]
 end
 
 function handleConnection(conn::TCPSocket, cipher::Cipher, config::SSConfig)
-    const IVLen = METHOD[cipher.method]["IVLEN"]
 	buff = Bytes(1024)
-    handShake(conn, buff) || begin 
+    req = handShake(conn, buff)
+    isa(req, Bool) && begin 
         close(conn) 
-        return
-    end
-
-    req, err = getRequest(conn, buff)
-    if err != nothing 
-        close(conn)
         return
     end
 
@@ -477,10 +464,15 @@ function handleConnection(conn::TCPSocket, cipher::Cipher, config::SSConfig)
         return
     end
 
-    isopen(conn) && write(conn, [0x05; 0x00; 0x00; 0x01; toIP(getipaddr()); toPort(config.lisPort)])
-    ssConn = SSConn(client, cipher)
+    ipaddr = getipaddr()
+    isopen(conn) && if isa(ipaddr, IPv4)
+        write(conn, [0x05; 0x00; 0x00; 0x01; toIP(ipaddr); toPort(config.lisPort)])
+    elseif isa(ipaddr, IPv6)
+        write(conn, [0x05; 0x00; 0x00; 0x04; toIP(ipaddr); toPort(config.lisPort)])
+    end
+    ssConn = SSConnection(client, cipher)
 
-    ssConn.cipher.eniv = rand(UInt8, IVLen)
+    ssConn.cipher.eniv = rand(UInt8, cipher.iv_len)
     nbytes, err = encrypt(buff, req, Csize_t(sizeof(req)), ssConn.cipher)
     if err != nothing
         close(ssConn.conn)
@@ -497,9 +489,9 @@ function handleConnection(conn::TCPSocket, cipher::Cipher, config::SSConfig)
         return
     end
 
-    ssConn.cipher.deiv = buff[1:IVLen]
+    ssConn.cipher.deiv = buff[1:cipher.iv_len]
 
-    if IVLen != nbytes
+    if cipher.iv_len != nbytes
         nothing
     end
 
@@ -511,7 +503,6 @@ end
 
 # run a Shadowsocks server or client
 function run(config::SSConfig)
-
     config.lisPort == false && begin 
         server = try 
             listen(config.host, config.port)
@@ -526,14 +517,18 @@ function run(config::SSConfig)
 
         while isopen(server)
             conn = accept(server)
-            @async handleSSConnection(SSConn(conn, cipher))
+            @async handleSSConnection(SSConnection(conn, deepcopy(cipher)))
         end
     end
 
-    isa(config.lisPort, Integer) && begin 
-
+    isa(config.lisPort, Integer) && begin
         server = try
-            listen(IPv4(0, 0, 0, 0), config.lisPort)
+            ipaddr = getipaddr()
+            if isa(ipaddr, IPv4) 
+                listen(IPv4(0), config.lisPort)
+            elseif isa(ipaddr, IPv6)
+                listen(IPv6(0), config.lisPort)
+            end
         catch err
             return
         end

@@ -18,8 +18,6 @@ end
 buff = Array{UInt8}(16)
 Shadowsocks.md5(buff, "Julia")
 @test [0x23; 0x44; 0x52; 0x1e; 0x38; 0x9d; 0x68; 0x97; 0xae; 0x7a; 0xf9; 0xab; 0xf1; 0x6e; 0x7c; 0xcc] == buff
-# Shadowsocks.@Md5(buff, "Julia")
-# @test [0x23; 0x44; 0x52; 0x1e; 0x38; 0x9d; 0x68; 0x97; 0xae; 0x7a; 0xf9; 0xab; 0xf1; 0x6e; 0x7c; 0xcc] == buff
 
 key = Shadowsocks.getkeys("CHACHA20-POLY1305", "Julia") 
 @test sizeof(key) == 32
@@ -29,16 +27,11 @@ key = Shadowsocks.getkeys("CHACHA20-POLY1305", "Julia")
 server = listen(2000)
 conn = nothing
 buff = Array{UInt8}(1024)
-@async begin
-	conn = accept(server)
-	while isopen(conn)
-		read(conn, buff)
-		close(conn)
-	end
-end
 
 client = connect(2000)
 write(client, Array{UInt8}("Julia"))
+conn = accept(server)
+Shadowsocks.read(conn, buff)
 @test String(buff[1:5]) == "Julia"
 close(client)
 
@@ -52,34 +45,27 @@ nbytes, err = Shadowsocks.decrypt(buff, buff[1:nbytes], nbytes, cipher)
 @test text == buff[1:nbytes]
 
 # ssConn read
-@async begin
-	conn = accept(server)
-	ssConn = Shadowsocks.SSConn(conn, cipher)
-	nbytes, err = read(ssConn, buff)
-	close(conn)
-end
 client = connect(2000)
 nbytes, err = Shadowsocks.encrypt(buff, text, sizeof(text), cipher)
 write(client, buff[1:nbytes])
+conn = accept(server)
+ssConn = Shadowsocks.SSConn(conn, cipher)
+nbytes, err = Shadowsocks.read_not_aead(ssConn, buff)
 @test text == buff[1:5]
 close(client)
 
 
 # ssConn write
-@async begin
-    conn = accept(server)
-	ssConn = Shadowsocks.SSConn(conn, cipher)
-	err = write(ssConn, text, 5)
-	close(conn)
-end
 client = connect(2000)
-nbytes, err = read(client, buff)
+conn = accept(server)
+ssConn = Shadowsocks.SSConn(conn, cipher)
+err = Shadowsocks.write_not_aead(ssConn, text, 5)
+nbytes, err = Shadowsocks.read(client, buff)
 nbytes, err = Shadowsocks.decrypt(buff, buff[1:nbytes], nbytes, cipher)
 @test text == buff[1:nbytes]
 close(client)
 
 # test ssclient
-server = listen(2000)
 @async run(SSServer())
 @async run(SSClient())
 
@@ -89,4 +75,6 @@ write(client, [0x05; 0x01; 0x00])
 write(client, [0x01; 0x01; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); Shadowsocks.toPort(2000)])
 @test readavailable(client) == [0x05; 0x00; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); 0x04; 0x38]
 write(client, b"julia")
+conn = accept(server)
+@test String(readavailable(conn)) == "julia"
 close(client)
