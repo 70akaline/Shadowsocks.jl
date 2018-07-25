@@ -10,8 +10,6 @@ __precompile__(false)
 # 
 module Shadowsocks
 
-# package code goes here
-
 export SSServer, SSClient, run
 
 import Base.run
@@ -21,15 +19,13 @@ import Base.isopen
 import Base.close
 
 const Bytes        = Array{UInt8}
-const CodeSet      = Bytes("1234567890QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm")
-const Buffer_Len   = 17408
-const Package_Size = 16383
+const Max_Size     = 0x3FFF
 const MD5Len       = 16
-const AEAD         = ["CHACHA20-POLY1305"; "CHACHA20-POLY1305-IETF"; "XCHACHA20-POLY1305-IETF"; "AES-256-GCM"]
+const SUBKEYINFO   = "ss-subkey"
 const METHOD       = Dict{String, Dict{String, Integer}}(
-    "CHACHA20-POLY1305-IETF"  => Dict{String, Integer}("TYPE" => Cuchar(2), "KEYLEN" => 32, "TAGLEN" => 16, "IVLEN" => 12),
-    "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("TYPE" => Cuchar(3), "KEYLEN" => 32, "TAGLEN" => 16, "IVLEN" => 24),
-    "AES-256-GCM"             => Dict{String, Integer}("TYPE" => Cuchar(4), "KEYLEN" => 32, "TAGLEN" => 16, "IVLEN" => 12)
+    "CHACHA20-POLY1305-IETF"  => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)),
+    "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(24)),
+    "AES-256-GCM"             => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12))
 )
 
 macro log(message)
@@ -48,23 +44,9 @@ macro dlsym(func, lib)
                 $zlocal = Libdl.dlsym($(esc(lib))::Ptr{Void}, $(esc(func)))
                 global $z = $zlocal
             end
-                $zlocal
+            $zlocal
         end
     end
-end
-
-macro genPass(len)
-    quote
-    	String(rand(CodeSet, $len))
-    end
-end
-
-function toPort(p)
-    return hex2bytes(num2hex(UInt16(p)))
-end
-
-function toIP(ip)
-    return hex2bytes(num2hex(ip.host))
 end
 
 function (++)(iv::Bytes)
@@ -100,44 +82,41 @@ mutable struct SSConfig
     password::String
 end
 SSServer(ip, port, method, password) = SSConfig(ip, port, nothing, method, password)
-SSServer() = SSServer(getipaddr(), 8088, "CHACHA20-POLY1305-IETF", "imgk0000")
+SSServer() = SSServer(getipaddr(), 8388, "CHACHA20-POLY1305-IETF", "imgk0000")
 SSClient(ip, port, lisPort, method, password) = SSConfig(ip, port, lisPort, method, password)
-SSClient() = SSConfig(getipaddr(), 8088, 1080, "CHACHA20-POLY1305-IETF", "imgk0000")
+SSClient() = SSConfig(getipaddr(), 8388, 1080, "CHACHA20-POLY1305-IETF", "imgk0000")
 
 mutable struct Cipher
     method::Union{String, Void}
-    add_text::Union{Bytes, Void}
-    add_text_len::Csize_t
     key::Union{Bytes, Void}
-    key_len::Csize_t
-    iv_len::Csize_t
-    ctype::Cuchar
-    isBlock::Union{Bool, Void}
-    tagLength::Union{Integer, Void}
+    keylen::Csize_t
+    ivlen::Csize_t
+    taglen::Union{Integer, Void}
+    encrypt::Union{Function, Void}
+    decrypt::Union{Function, Void}
 end
-function Cipher(config::SSConfig)
+function Cipher(config::SSConfig) 
     cipher = Cipher(
-        config.method,
-        Bytes(config.password),
-        Csize_t(sizeof(config.password)),
-        nothing,
-        METHOD[config.method]["KEYLEN"],
-        METHOD[config.method]["IVLEN"],
-        METHOD[config.method]["TYPE"],
-        nothing,
-        nothing
-    )
+    config.method,
+    genkeys(METHOD[config.method]["KEYLEN"], config.password),
+    METHOD[config.method]["KEYLEN"],
+    METHOD[config.method]["IVLEN"],
+    METHOD[config.method]["TAGLEN"],
+    nothing,
+    nothing)
 
-    cipher.key = getkeys(cipher.key_len, config.password)
-
-    if config.method in AEAD
-        cipher.isBlock = true
-        cipher.tagLength = METHOD[config.method]["TAGLEN"]
-    else 
-        cipher.isBlock = false
+    if config.method == "CHACHA20-POLY1305-IETF"
+        cipher.encrypt = crypto_aead_chacha20poly1305_ietf_encrypt
+        cipher.decrypt = crypto_aead_chacha20poly1305_ietf_decrypt
+    elseif config.method == "XCHACHA20-POLY1305-IETF"
+        cipher.encrypt = crypto_aead_xchacha20poly1305_ietf_encrypt
+        cipher.decrypt = crypto_aead_xchacha20poly1305_ietf_decrypt
+    elseif config.method == "AES-256-GCM"
+        cipher.encrypt = crypto_aead_aes256gcm_encrypt
+        cipher.decrypt = crypto_aead_aes256gcm_decrypt
     end
 
-    return cipher, nothing
+    return cipher
 end
 
 mutable struct SSConnection
@@ -146,6 +125,8 @@ mutable struct SSConnection
     ivDecrypt::Union{Bytes, Void}
     ivEncrypt::Union{Bytes, Void}
     cache::Union{Bytes, Void}
+    keyDecrypt::Union{Bytes, Void}
+    keyEncrypt::Union{Bytes, Void}
 end
 
 function close(ssConn::SSConnection)
@@ -156,13 +137,64 @@ function isopen(ssConn::SSConnection)
     return isopen(ssConn.conn)
 end
 
+function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Void})
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    nbytes == nothing && begin
+        salt = Bytes(saltlen)
+        nbytes, err = read(ssConn.conn, salt, saltlen)
+
+        ssConn.keyDecrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        if err != nothing
+            return err
+        end
+
+        nbytes, err = read(ssConn, buff)
+        if err != nothing
+            return err
+        end
+
+        salt[:] = rand(UInt8, ssConn.cipher.keylen)
+        ssConn.keyEncrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        if err != nothing
+            return err
+        end
+
+        err = write(ssConn.conn, salt)
+
+        return nothing
+    end
+
+    begin
+        salt = rand(UInt8, saltlen)
+        ssConn.keyEncrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        if err != nothing
+            return err
+        end
+
+        err = write(ssConn.conn, salt)
+        err = write(ssConn, buff, nbytes)
+        nbytes, err = read(ssConn.conn, salt, saltlen)
+        ssConn.keyDecrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        if err != nothing
+            return err
+        end
+
+        return nothing
+    end
+end
+
 # ==================
 # ====libsodium=====
 
-const libsodium = Libdl.dlopen(joinpath(Pkg.dir("Shadowsocks"), "libs", "libsodium"))
-const c_sodium_init = @dlsym("sodium_init", libsodium)
-const c_crypto_aead_chacha20poly1305_ietf_encrypt = @dlsym("crypto_aead_chacha20poly1305_ietf_encrypt", libsodium)
-const c_crypto_aead_chacha20poly1305_ietf_decrypt = @dlsym("crypto_aead_chacha20poly1305_ietf_decrypt", libsodium)
+const libsodium                                    = Libdl.dlopen(joinpath(@__DIR__, "libsodium"))
+const c_sodium_init                                = @dlsym("sodium_init", libsodium)
+const c_crypto_aead_chacha20poly1305_ietf_encrypt  = @dlsym("crypto_aead_chacha20poly1305_ietf_encrypt", libsodium)
+const c_crypto_aead_chacha20poly1305_ietf_decrypt  = @dlsym("crypto_aead_chacha20poly1305_ietf_decrypt", libsodium)
+const c_crypto_aead_xchacha20poly1305_ietf_encrypt = @dlsym("crypto_aead_xchacha20poly1305_ietf_encrypt", libsodium)
+const c_crypto_aead_xchacha20poly1305_ietf_decrypt = @dlsym("crypto_aead_xchacha20poly1305_ietf_decrypt", libsodium)
+const c_crypto_aead_aes256gcm_encrypt              = @dlsym("crypto_aead_aes256gcm_encrypt", libsodium)
+const c_crypto_aead_aes256gcm_decrypt              = @dlsym("crypto_aead_aes256gcm_decrypt", libsodium)
 
 function sodium_init()
     return ccall(c_sodium_init, Cint, (), )
@@ -186,15 +218,80 @@ function crypto_aead_chacha20poly1305_ietf_decrypt(
         m, mlen, nsec, c, clen, ad, adlen, npub, k)
 end 
 
+function crypto_aead_xchacha20poly1305_ietf_encrypt(
+    c::Bytes, clen::Ref{UInt64}, m::Bytes, mlen::UInt64, ad::Bytes, adlen::UInt64, nsec::Ptr{Void}, npub::Bytes, k::Bytes)
+
+    return ccall(c_crypto_aead_xchacha20poly1305_ietf_encrypt, 
+        Cint, 
+        (Ref{Cuchar}, Ref{Csize_t}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ptr{Void}, Ref{Cuchar}, Ref{Cuchar}), 
+        c, clen, m, mlen, ad, adlen, nsec, npub, k)
+end
+
+function crypto_aead_xchacha20poly1305_ietf_decrypt(
+    m::Bytes, mlen::Ref{UInt64}, nsec::Ptr{Void}, c::Bytes, clen::UInt64, ad::Bytes, adlen::UInt64, npub::Bytes, k::Bytes)
+
+    return ccall(c_crypto_aead_xchacha20poly1305_ietf_decrypt, 
+        Cint, 
+        (Ref{Cuchar}, Ref{Csize_t}, Ptr{Void}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}), 
+        m, mlen, nsec, c, clen, ad, adlen, npub, k)
+end 
+
+function crypto_aead_aes256gcm_encrypt(
+    c::Bytes, clen::Ref{UInt64}, m::Bytes, mlen::UInt64, ad::Bytes, adlen::UInt64, nsec::Ptr{Void}, npub::Bytes, k::Bytes)
+
+    return ccall(c_crypto_aead_aes256gcm_encrypt, 
+        Cint, 
+        (Ref{Cuchar}, Ref{Csize_t}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ptr{Void}, Ref{Cuchar}, Ref{Cuchar}), 
+        c, clen, m, mlen, ad, adlen, nsec, npub, k)
+end
+
+function crypto_aead_aes256gcm_decrypt(
+    m::Bytes, mlen::Ref{UInt64}, nsec::Ptr{Void}, c::Bytes, clen::UInt64, ad::Bytes, adlen::UInt64, npub::Bytes, k::Bytes)
+
+    return ccall(c_crypto_aead_aes256gcm_decrypt, 
+        Cint, 
+        (Ref{Cuchar}, Ref{Csize_t}, Ptr{Void}, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Csize_t, Ref{Cuchar}, Ref{Cuchar}), 
+        m, mlen, nsec, c, clen, ad, adlen, npub, k)
+end 
+
 # ==================
 
-function getkeys(keylen::Csize_t, str::String)
+# ==================
+# ===HKDF-SHA1======
+
+function gensubkey(salt::Bytes, masterkey::Bytes, keylen::Integer)
+    buff = Bytes(keylen) 
+    err = hkdf_sha1(salt, length(salt), masterkey, keylen, buff, keylen)
+    if err != 0
+        return nothing, "Generate Sub Key Error"
+    end
+
+    return buff, nothing
+end
+
+const SHA1 = 0
+const INFO = b"ss-subkey"
+const INFOLEN = 9
+
+const hkdf = Libdl.dlopen(joinpath(@__DIR__, "hkdf"))
+const c_hkdf = @dlsym("hkdf", hkdf)
+
+function hkdf_sha1(salt::Bytes, saltlen::Integer, ikm::Bytes, ikmlen::Integer, buff::Bytes, keylen::Integer)
+    return ccall(c_hkdf, 
+        Cint, 
+        (Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint), 
+        SHA1, salt, saltlen, ikm, ikmlen, INFO, INFOLEN, buff, keylen)
+end
+
+# ==================
+
+function genkeys(keylen::Csize_t, str::String)
     password = Bytes(str)
 
-    cnt = Integer(floor((keylen-1)/MD5Len)) + 1
+    cnt = Integer(ceil(keylen/MD5Len))
     m = Bytes(cnt * MD5Len)
-    
-    buff = Array{Cuchar}(MD5Len)
+
+    buff = Bytes(MD5Len)
     md5(buff, password)
     m[1:MD5Len] = buff
 
@@ -218,7 +315,7 @@ function read(io::TCPSocket, buff::Bytes)
         return nothing, err
     end
 
-    nbytes > Package_Size ? nbytes = Package_Size : nothing
+    nbytes > Max_Size ? nbytes = Max_Size : nothing
     try 
         readbytes!(io, buff, nbytes)
     catch err
@@ -271,28 +368,12 @@ function write(io::TCPSocket, buff::Bytes, nbytes::Integer)
 end
 
 function read(ssConn::SSConnection, buff::Bytes)
-    if ssConn.cipher.isBlock
-        return read_aead(ssConn, buff)
-    else
-        return read_stream(ssConn, buff)
-    end
-end
-
-function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
-    if ssConn.cipher.isBlock
-        return write_aead(ssConn, buff, nbytes)
-    else
-        return write_stream(ssConn, buff, nbytes)
-    end
-end
-
-function read_aead(ssConn::SSConnection, buff::Bytes)
-    nbytes, err = read_stream(ssConn, buff, 2 + ssConn.cipher.tagLength)
+    nbytes, err = read_stream(ssConn, buff, 2 + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
     end
 
-    nbytes, err = read_stream(ssConn, buff, buff[1]*256 + buff[2] + ssConn.cipher.tagLength)
+    nbytes, err = read_stream(ssConn, buff, buff[1]*256 + buff[2] + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
     end
@@ -300,7 +381,7 @@ function read_aead(ssConn::SSConnection, buff::Bytes)
     return nbytes, nothing
 end
 
-function write_aead(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
     ssConn.cache[1:2] = hex2bytes(num2hex(UInt16(nbytes)))
     err = write_stream(ssConn, ssConn.cache, 2)
     if err != nothing
@@ -315,26 +396,6 @@ function write_aead(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
     return nothing
 end
 
-function read_stream(ssConn::SSConnection, buff::Bytes)
-    nbytes, err = read(ssConn.conn, buff)
-    if err != nothing
-        return nothing, err
-    end
-
-    nbytes, err = decrypt(buff, buff, nbytes, ssConn)
-    if err != nothing
-        return nothing, err
-    end
-
-    if ssConn.cipher.isBlock
-        (++)(ssConn.ivDecrypt)
-    else
-        nothing
-    end
-
-    return nbytes, nothing
-end
-
 function read_stream(ssConn::SSConnection, buff::Bytes, n_byte::Integer)
     nbytes, err = read(ssConn.conn, buff, n_byte)
     if err != nothing
@@ -346,12 +407,7 @@ function read_stream(ssConn::SSConnection, buff::Bytes, n_byte::Integer)
         return nothing, err
     end
 
-    if ssConn.cipher.isBlock
-        (++)(ssConn.ivDecrypt)
-    else
-        nothing
-    end
-
+    (++)(ssConn.ivDecrypt)
     return nbytes, nothing
 end
 
@@ -367,21 +423,14 @@ function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
         return err
     end
 
-    if ssConn.cipher.isBlock
-        (++)(ssConn.ivEncrypt)
-    else
-        nothing
-    end
-
+    (++)(ssConn.ivEncrypt)
     return nothing
 end
 
 function encrypt(buff::Bytes, text::Bytes, text_len::Integer, ssConn::SSConnection)
     nbytes = Ref{UInt64}(0)
-    if ssConn.cipher.method == "CHACHA20-POLY1305-IETF"
-        err = crypto_aead_chacha20poly1305_ietf_encrypt(
-            buff, nbytes, text, Csize_t(text_len), ssConn.cipher.add_text, ssConn.cipher.add_text_len, C_NULL, ssConn.ivEncrypt, ssConn.cipher.key)
-    end
+    err = ssConn.cipher.encrypt(
+        buff, nbytes, text, Csize_t(text_len), ssConn.keyEncrypt, ssConn.cipher.keylen, C_NULL, ssConn.ivEncrypt, ssConn.keyEncrypt)
 
     if err == -1
         return nothing, err
@@ -392,10 +441,8 @@ end
 
 function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, ssConn::SSConnection)
     nbytes = Ref{UInt64}(0)
-    if ssConn.cipher.method == "CHACHA20-POLY1305-IETF"
-        err = crypto_aead_chacha20poly1305_ietf_decrypt(
-            buff, nbytes, C_NULL, ciphertext, Csize_t(ciphertext_len), ssConn.cipher.add_text, ssConn.cipher.add_text_len, ssConn.ivDecrypt, ssConn.cipher.key)
-    end
+    err = ssConn.cipher.decrypt(
+        buff, nbytes, C_NULL, ciphertext, Csize_t(ciphertext_len), ssConn.keyDecrypt, ssConn.cipher.keylen, ssConn.ivDecrypt, ssConn.keyDecrypt)
 
     if err == -1
         return nothing, err
@@ -405,7 +452,7 @@ function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, ssConn
 end
 
 function ioCopy(from::Union{SSConnection, TCPSocket}, to::Union{SSConnection, TCPSocket})
-    buff = Bytes(Buffer_Len)
+    buff = Bytes(Max_Size + (from isa SSConnection ? from.cipher.taglen : to.cipher.taglen))
     while isopen(from) && isopen(to)
         nbytes, err = read(from, buff)
         if err != nothing
@@ -454,14 +501,9 @@ function handleConnection(ssConn::SSConnection)
     client = nothing
 
     while true
-        buff = Bytes(320)
-        if ssConn.cipher.isBlock
-            read(ssConn, buff)
-        else
-            read(ssConn.conn, ssConn.ivDecrypt, ssConn.cipher.iv_len)
-            read(ssConn, buff)
-            write(ssConn.conn, ssConn.ivEncrypt)
-        end
+        buff = Bytes(262)
+
+        err = init(ssConn, buff, nothing)
 
         client, err = connectRemote(buff)
         if err != nothing
@@ -501,7 +543,7 @@ function handShake(conn::TCPSocket, buff::Bytes)
         return err
     end
 
-    if buff[2] != 0x01
+    if buff[1:3] != [0x05; 0x01; 0x00]
         return "Not a Supported CMD"
     end
 
@@ -525,19 +567,11 @@ end
 
 function handleConnection(conn::TCPSocket, ssConn::SSConnection)
     while true
-        buff = Bytes(320)
+        buff = Bytes(262)
         nbytes = handShake(conn, buff)
-        isa(nbytes, Integer) || begin 
-            break
-        end
+        isa(nbytes, Integer) || break
 
-        if ssConn.cipher.isBlock
-            write(ssConn, buff, nbytes)
-        else
-            write(ssConn.conn, ssConn.ivEncrypt)
-            write(ssConn, buff, nbytes)
-            read(ssConn.conn, ssConn.ivDecrypt, ssConn.cipher.iv_len)
-        end
+        err = init(ssConn, buff, nbytes)
 
         buff = nothing
         @async ioCopy(conn, ssConn)
@@ -557,20 +591,14 @@ function runServer(config::SSConfig)
         return
     end
 
-    cipher, err = Cipher(config)
-    if err != nothing
-        return
-    end
+    cipher = Cipher(config)
+    sodium_init()
 
     while isopen(server)
         conn = accept(server)
 
         @async handleConnection(
-            SSConnection(conn, cipher, 
-                cipher.isBlock ? zeros(UInt8, cipher.iv_len) : rand(UInt8, cipher.iv_len), 
-                cipher.isBlock ? zeros(UInt8, cipher.iv_len) : rand(UInt8, cipher.iv_len), 
-                cipher.isBlock ? Bytes(cipher.tagLength + 2) : nothing
-            )
+            SSConnection(conn, cipher, zeros(UInt8, cipher.ivlen), zeros(UInt8, cipher.ivlen), Bytes(cipher.taglen + 2), nothing, nothing)
         )
     end
 end
@@ -586,10 +614,8 @@ function runClient(config::SSConfig)
         return
     end
 
-    cipher, err = Cipher(config)
-    if err != nothing
-        return
-    end
+    cipher = Cipher(config)
+    sodium_init()
 
     while isopen(server)
         conn = accept(server)
@@ -602,11 +628,7 @@ function runClient(config::SSConfig)
         end
 
         @async handleConnection(conn, 
-            SSConnection(client, cipher, 
-                cipher.isBlock ? zeros(UInt8, cipher.iv_len) : rand(UInt8, cipher.iv_len), 
-                cipher.isBlock ? zeros(UInt8, cipher.iv_len) : rand(UInt8, cipher.iv_len), 
-                cipher.isBlock ? Bytes(cipher.tagLength + 2) : nothing
-            )
+            SSConnection(client, cipher, zeros(UInt8, cipher.ivlen), zeros(UInt8, cipher.ivlen), Bytes(cipher.taglen + 2), nothing, nothing)
         )
     end
 end
@@ -837,7 +859,5 @@ function digest!(context::MD5_CTX)
     transform!(context)
     reinterpret(UInt8, context.state)
 end
-
-# =================================
 
 end # module
