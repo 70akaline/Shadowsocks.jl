@@ -13,20 +13,16 @@ function main(args)
         "--server", "-s"
             help = "shadowsocks sever"
             default = "0.0.0.0"
-            required = true
         "--port", "-p"
             help = "shadowsocks server port"
             arg_type = Int
             default = 8388
-            required = true
         "--method", "-m"
             help = "encryption method"
             default = "CHACHA20-POLY1305-IETF"
-            required = true
         "--password", "-k"
             help = "access password"
             default = "imgk0000"
-            required = true
     end
 
     parsed_args = parse_args(args, s)
