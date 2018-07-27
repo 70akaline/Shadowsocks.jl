@@ -18,15 +18,13 @@ import Base.write
 import Base.isopen
 import Base.close
 
-const Bytes        = Array{UInt8}
-const Max_Size     = 0x3FFF
-const MD5Len       = 16
-const SUBKEYINFO   = "ss-subkey"
-const METHOD       = Dict{String, Dict{String, Integer}}(
-    "CHACHA20-POLY1305-IETF"  => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)),
+const Bytes = Array{UInt8}
+const MaxSize = 0x3FFF
+const MD5Len = 16
+const METHOD = Dict{String, Dict{String, Integer}}(
+    "CHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)),
     "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(24)),
-    "AES-256-GCM"             => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12))
-)
+    "AES-256-GCM" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)))
 
 macro log(message)
     quote
@@ -50,26 +48,10 @@ macro dlsym(func, lib)
 end
 
 function (++)(iv::Bytes)
-    iv[1] += 0x01
-    if iv[1] == 0x00
-        iv[2] += 0x01
-        if iv[2] == 0x00
-            iv[3] += 0x01
-            if iv[3] == 0x00
-                iv[4] += 0x01
-                if iv[4] == 0x00
-                    iv[5] += 0x01
-                    if iv[5] == 0x00
-                        iv[6] += 0x01
-                        if iv[6] == 0x00
-                            iv[7] += 0x01
-                            if iv[7] == 0x00
-                                iv[8] += 0x01
-                            end
-                        end
-                    end
-                end
-            end
+    for i in 1:length(iv)
+        iv[i] += 0x01
+        if iv[i] != 0x00
+            break
         end
     end
 end
@@ -97,13 +79,13 @@ mutable struct Cipher
 end
 function Cipher(config::SSConfig) 
     cipher = Cipher(
-    config.method,
-    genkeys(METHOD[config.method]["KEYLEN"], config.password),
-    METHOD[config.method]["KEYLEN"],
-    METHOD[config.method]["IVLEN"],
-    METHOD[config.method]["TAGLEN"],
-    nothing,
-    nothing)
+        config.method,
+        genkeys(METHOD[config.method]["KEYLEN"], config.password),
+        METHOD[config.method]["KEYLEN"],
+        METHOD[config.method]["IVLEN"],
+        METHOD[config.method]["TAGLEN"],
+        nothing,
+        nothing)
 
     if config.method == "CHACHA20-POLY1305-IETF"
         cipher.encrypt = crypto_aead_chacha20poly1305_ietf_encrypt
@@ -124,7 +106,7 @@ mutable struct SSConnection
     cipher::Union{Cipher, Void}
     ivDecrypt::Union{Bytes, Void}
     ivEncrypt::Union{Bytes, Void}
-    cache::Union{Bytes, Void}
+    tagCache::Union{Bytes, Void}
     keyDecrypt::Union{Bytes, Void}
     keyEncrypt::Union{Bytes, Void}
 end
@@ -143,8 +125,11 @@ function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Void})
     nbytes == nothing && begin
         salt = Bytes(saltlen)
         nbytes, err = read(ssConn.conn, salt, saltlen)
+        if err != nothing
+            return err
+        end
 
-        ssConn.keyDecrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
         if err != nothing
             return err
         end
@@ -155,27 +140,42 @@ function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Void})
         end
 
         salt[:] = rand(UInt8, ssConn.cipher.keylen)
-        ssConn.keyEncrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
         if err != nothing
             return err
         end
 
-        err = write(ssConn.conn, salt)
+        err = write(ssConn.conn, salt, saltlen)
+        if err != nothing
+            return err
+        end
 
         return nothing
     end
 
     begin
         salt = rand(UInt8, saltlen)
-        ssConn.keyEncrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
         if err != nothing
             return err
         end
 
-        err = write(ssConn.conn, salt)
+        err = write(ssConn.conn, salt, saltlen)
+        if err != nothing
+            return err
+        end
+
         err = write(ssConn, buff, nbytes)
+        if err != nothing
+            return err
+        end
+
         nbytes, err = read(ssConn.conn, salt, saltlen)
-        ssConn.keyDecrypt, err = gensubkey(ssConn.cipher.key, salt, ssConn.cipher.keylen)
+        if err != nothing
+            return err
+        end
+
+        ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
         if err != nothing
             return err
         end
@@ -187,14 +187,14 @@ end
 # ==================
 # ====libsodium=====
 
-const libsodium                                    = Libdl.dlopen(joinpath(@__DIR__, "libsodium"))
-const c_sodium_init                                = @dlsym("sodium_init", libsodium)
-const c_crypto_aead_chacha20poly1305_ietf_encrypt  = @dlsym("crypto_aead_chacha20poly1305_ietf_encrypt", libsodium)
-const c_crypto_aead_chacha20poly1305_ietf_decrypt  = @dlsym("crypto_aead_chacha20poly1305_ietf_decrypt", libsodium)
+const libsodium = Libdl.dlopen(joinpath(@__DIR__, "libsodium"))
+const c_sodium_init = @dlsym("sodium_init", libsodium)
+const c_crypto_aead_chacha20poly1305_ietf_encrypt = @dlsym("crypto_aead_chacha20poly1305_ietf_encrypt", libsodium)
+const c_crypto_aead_chacha20poly1305_ietf_decrypt = @dlsym("crypto_aead_chacha20poly1305_ietf_decrypt", libsodium)
 const c_crypto_aead_xchacha20poly1305_ietf_encrypt = @dlsym("crypto_aead_xchacha20poly1305_ietf_encrypt", libsodium)
 const c_crypto_aead_xchacha20poly1305_ietf_decrypt = @dlsym("crypto_aead_xchacha20poly1305_ietf_decrypt", libsodium)
-const c_crypto_aead_aes256gcm_encrypt              = @dlsym("crypto_aead_aes256gcm_encrypt", libsodium)
-const c_crypto_aead_aes256gcm_decrypt              = @dlsym("crypto_aead_aes256gcm_decrypt", libsodium)
+const c_crypto_aead_aes256gcm_encrypt = @dlsym("crypto_aead_aes256gcm_encrypt", libsodium)
+const c_crypto_aead_aes256gcm_decrypt = @dlsym("crypto_aead_aes256gcm_decrypt", libsodium)
 
 function sodium_init()
     return ccall(c_sodium_init, Cint, (), )
@@ -260,46 +260,46 @@ end
 # ===HKDF-SHA1======
 
 function gensubkey(salt::Bytes, masterkey::Bytes, keylen::Integer)
-    buff = Bytes(keylen) 
-    err = hkdf_sha1(salt, length(salt), masterkey, keylen, buff, keylen)
+    subkey = Bytes(keylen) 
+    err = hkdf_sha1(salt, length(salt), masterkey, keylen, subkey, keylen)
     if err != 0
         return nothing, "Generate Sub Key Error"
     end
 
-    return buff, nothing
+    return subkey, nothing
 end
 
-const SHA1 = 0
+const SHA1 = Cint(0)
 const INFO = b"ss-subkey"
-const INFOLEN = 9
+const INFOLEN = Cint(9)
 
 const hkdf = Libdl.dlopen(joinpath(@__DIR__, "hkdf"))
 const c_hkdf = @dlsym("hkdf", hkdf)
 
-function hkdf_sha1(salt::Bytes, saltlen::Integer, ikm::Bytes, ikmlen::Integer, buff::Bytes, keylen::Integer)
+function hkdf_sha1(salt::Bytes, saltlen::Integer, ikm::Bytes, ikmlen::Integer, okm::Bytes, okmlen::Integer)
     return ccall(c_hkdf, 
         Cint, 
         (Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint, Ref{Cuchar}, Cint), 
-        SHA1, salt, saltlen, ikm, ikmlen, INFO, INFOLEN, buff, keylen)
+        SHA1, salt, saltlen, ikm, ikmlen, INFO, INFOLEN, okm, okmlen)
 end
 
 # ==================
 
-function genkeys(keylen::Csize_t, str::String)
-    password = Bytes(str)
-
+function genkeys(keylen::Csize_t, password::String)
     cnt = Integer(ceil(keylen/MD5Len))
-    m = Bytes(cnt * MD5Len)
+    tmp = Bytes(cnt * MD5Len)
 
-    buff = Bytes(MD5Len)
-    md5(buff, password)
-    m[1:MD5Len] = buff
+    buff = Bytes(MD5Len + sizeof(password))
+    buff[MD5Len+1:end] = Bytes(password)
+    md5(buff, Bytes(password))
+    tmp[1:MD5Len] = buff[1:MD5Len]
 
-    for i in 2:1:cnt
-        md5(buff, [buff; password])
-        m[MD5Len * (i-1) + 1 : MD5Len * i] = buff
+    for i in 2:cnt
+        md5(buff, buff)
+        tmp[MD5Len * (i-1) + 1 : MD5Len * i] = buff[1:MD5Len]
     end
-    return m[1:keylen]
+
+    return tmp[1:keylen]
 end
 
 function read(io::TCPSocket, buff::Bytes)
@@ -315,9 +315,9 @@ function read(io::TCPSocket, buff::Bytes)
         return nothing, err
     end
 
-    nbytes > Max_Size ? nbytes = Max_Size : nothing
+    nbytes = nbytes > MaxSize ? MaxSize : nbytes
     try 
-        readbytes!(io, buff, nbytes)
+        isopen(io) ? readbytes!(io, buff, nbytes) : return nothing, "Connection Closed"
     catch err
         return nothing, err
     end
@@ -325,8 +325,8 @@ function read(io::TCPSocket, buff::Bytes)
     return nbytes, nothing
 end
 
-function read(io::TCPSocket, buff::Bytes, n_byte::Integer)
-    left = n_byte
+function read(io::TCPSocket, buff::Bytes, n::Integer)
+    left = n
     ptr = 1
 
     while left > 0
@@ -354,12 +354,12 @@ function read(io::TCPSocket, buff::Bytes, n_byte::Integer)
         end
     end
 
-    return n_byte, nothing
+    return n, nothing
 end
 
 function write(io::TCPSocket, buff::Bytes, nbytes::Integer)
     try 
-        write(io, buff[1:nbytes])
+        isopen(io) ? write(io, buff[1:nbytes]) : return "Connection Closed"
     catch err 
         return err 
     end
@@ -382,8 +382,8 @@ function read(ssConn::SSConnection, buff::Bytes)
 end
 
 function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
-    ssConn.cache[1:2] = hex2bytes(num2hex(UInt16(nbytes)))
-    err = write_stream(ssConn, ssConn.cache, 2)
+    ssConn.tagCache[1:2] = [UInt8(nbytes>>8); UInt8(nbytes&255)]
+    err = write_stream(ssConn, ssConn.tagCache, 2)
     if err != nothing
         return err
     end
@@ -396,8 +396,8 @@ function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
     return nothing
 end
 
-function read_stream(ssConn::SSConnection, buff::Bytes, n_byte::Integer)
-    nbytes, err = read(ssConn.conn, buff, n_byte)
+function read_stream(ssConn::SSConnection, buff::Bytes, n::Integer)
+    nbytes, err = read(ssConn.conn, buff, n)
     if err != nothing
         return nothing, err
     end
@@ -417,7 +417,6 @@ function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
         return err
     end
 
-    isopen(ssConn.conn) || return "Connection Closed"
     err = write(ssConn.conn, buff, nbytes)
     if err != nothing
         return err
@@ -427,10 +426,10 @@ function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
     return nothing
 end
 
-function encrypt(buff::Bytes, text::Bytes, text_len::Integer, ssConn::SSConnection)
+function encrypt(buff::Bytes, text::Bytes, textlen::Integer, ssConn::SSConnection)
     nbytes = Ref{UInt64}(0)
     err = ssConn.cipher.encrypt(
-        buff, nbytes, text, Csize_t(text_len), ssConn.keyEncrypt, ssConn.cipher.keylen, C_NULL, ssConn.ivEncrypt, ssConn.keyEncrypt)
+        buff, nbytes, text, Csize_t(textlen), ssConn.keyEncrypt, Csize_t(0), C_NULL, ssConn.ivEncrypt, ssConn.keyEncrypt)
 
     if err == -1
         return nothing, err
@@ -439,10 +438,10 @@ function encrypt(buff::Bytes, text::Bytes, text_len::Integer, ssConn::SSConnecti
     return nbytes[], nothing
 end
 
-function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, ssConn::SSConnection)
+function decrypt(buff::Bytes, ciphertext::Bytes, ciphertextlen::Integer, ssConn::SSConnection)
     nbytes = Ref{UInt64}(0)
     err = ssConn.cipher.decrypt(
-        buff, nbytes, C_NULL, ciphertext, Csize_t(ciphertext_len), ssConn.keyDecrypt, ssConn.cipher.keylen, ssConn.ivDecrypt, ssConn.keyDecrypt)
+        buff, nbytes, C_NULL, ciphertext, Csize_t(ciphertextlen), ssConn.keyDecrypt, Csize_t(0), ssConn.ivDecrypt, ssConn.keyDecrypt)
 
     if err == -1
         return nothing, err
@@ -452,18 +451,16 @@ function decrypt(buff::Bytes, ciphertext::Bytes, ciphertext_len::Integer, ssConn
 end
 
 function ioCopy(from::Union{SSConnection, TCPSocket}, to::Union{SSConnection, TCPSocket})
-    buff = Bytes(Max_Size + (from isa SSConnection ? from.cipher.taglen : to.cipher.taglen))
-    while isopen(from) && isopen(to)
+    buff = Bytes(MaxSize + (from isa SSConnection ? from.cipher.taglen : to.cipher.taglen))
+    while true
         nbytes, err = read(from, buff)
         if err != nothing
             break
         end
 
-        isopen(to) && begin
-            err = write(to, buff, nbytes)
-            if err != nothing
-                break
-            end
+        err = write(to, buff, nbytes)
+        if err != nothing
+            break
         end
     end
 end
@@ -504,6 +501,9 @@ function handleConnection(ssConn::SSConnection)
         buff = Bytes(262)
 
         err = init(ssConn, buff, nothing)
+        if err != nothing
+            break
+        end
 
         client, err = connectRemote(buff)
         if err != nothing
@@ -569,9 +569,14 @@ function handleConnection(conn::TCPSocket, ssConn::SSConnection)
     while true
         buff = Bytes(262)
         nbytes = handShake(conn, buff)
-        isa(nbytes, Integer) || break
+        if !isa(nbytes, Integer)
+            break
+        end
 
         err = init(ssConn, buff, nbytes)
+        if err != nothing
+            break
+        end
 
         buff = nothing
         @async ioCopy(conn, ssConn)
@@ -592,7 +597,10 @@ function runServer(config::SSConfig)
     end
 
     cipher = Cipher(config)
-    sodium_init()
+    err = sodium_init()
+    if err < 0
+    	return
+    end
 
     while isopen(server)
         conn = accept(server)
@@ -615,7 +623,10 @@ function runClient(config::SSConfig)
     end
 
     cipher = Cipher(config)
-    sodium_init()
+    err = sodium_init()
+    if err < 0
+    	return 
+    end
 
     while isopen(server)
         conn = accept(server)
