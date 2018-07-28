@@ -186,6 +186,26 @@ function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Void})
 end
 
 # ==================
+# ====SIP002========
+# "ss://chacha20-poly1305-ietf:imgk0000@192.168.0.1:1080"
+# "ss://chacha20-poly1305-ietf:imgk0000@:1080"
+function parseURI(text::String)
+    if text[1:5] != "ss://"
+        return nothing, "Invalid Config"
+    end
+
+    r = match(r"ss://(?<method>[\w-]+):(?<password>\w+)@(?<ip>[0-9\.]*):(?<port>\d+)", text)
+
+    if r["ip"] == ""
+        return SSServer(getipaddr() isa IPv4 ? IPv4(0) : IPv6(0), parse(UInt16, r["port"]), uppercase(r["method"]), r["password"]), nothing
+    else
+        return SSClient(parse(IPAddr, r["ip"]), parse(UInt16, r["port"]), 1080, uppercase(r["method"]), r["password"]), nothing
+    end
+end
+
+# ==================
+
+# ==================
 # ====libsodium=====
 
 const libsodium = Libdl.dlopen(joinpath(@__DIR__, "libsodium"))
@@ -374,7 +394,7 @@ function read(ssConn::SSConnection, buff::Bytes)
         return nothing, err
     end
 
-    nbytes, err = read_stream(ssConn, buff, buff[1]*256 + buff[2] + ssConn.cipher.taglen)
+    nbytes, err = read_stream(ssConn, buff, UInt16(buff[1]) << 8 + buff[2] + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
     end
@@ -476,14 +496,14 @@ function connectRemote(buff::Bytes)
 
     if buff[1] == 0x01
         host = IPv4(ntoh(unsafe_load(Ptr{UInt32}(pointer(buff[2:5])))))
-        port = buff[6]*256 + buff[7]
+        port = UInt16(buff[6]) << 8 + buff[7]
     elseif buff[1] == 0x03
         len = buff[2]
         host = String(buff[3:len+2])
-        port = buff[len+3]*256 + buff[len+4]
+        port = UInt16(buff[len+3]) << 8 + buff[len+4]
     elseif buff[1] == 0x04
         host = IPv6(ntoh(unsafe_load(Ptr{UInt128}(pointer(buff[2:17])))))
-        port = buff[18]*256 + buff[19]
+        port = UInt16(buff[18]) << 8 + buff[19]
     end
 
     client = try
@@ -533,9 +553,12 @@ function handShake(conn::TCPSocket, buff::Bytes)
     end
 
     if 0x00 in buff[3:nbytes]
-        isopen(conn) && write(conn, [0x05; 0x00])
+        err = write(conn, [0x05; 0x00], 2)
+        if err != nothing
+            return err
+        end
     else 
-        isopen(conn) && write(conn, [0x05; 0xFF])
+        err = isopen(conn) && write(conn, [0x05; 0xFF], 2)
         return "Not a Valid Authentication"
     end
 
@@ -553,14 +576,20 @@ function handShake(conn::TCPSocket, buff::Bytes)
         return err
     end
 
-    isopen(conn) && if isa(getipaddr(), IPv4)
-        write(conn, [0x05; 0x00; 0x00; 0x01; 
+    if isa(getipaddr(), IPv4)
+        err = write(conn, [0x05; 0x00; 0x00; 0x01; 
             0x00; 0x00; 0x00; 0x00; 
-            0x00; 0x00])
+            0x00; 0x00], 10)
+        if err != nothing
+            return err
+        end
     else
-        write(conn, [0x05; 0x00; 0x00; 0x04; 
+        err = write(conn, [0x05; 0x00; 0x00; 0x04; 
             0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 0x00; 
-            0x00; 0x00])
+            0x00; 0x00], 22)
+        if err != nothing
+            return err
+        end
     end
 
     return nbytes
@@ -570,7 +599,7 @@ function handleConnection(conn::TCPSocket, ssConn::SSConnection)
     while true
         buff = Bytes(262)
         nbytes = handShake(conn, buff)
-        if !isa(nbytes, Integer)
+        if !(nbytes isa Integer)
             break
         end
 
