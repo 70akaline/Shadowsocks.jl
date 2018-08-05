@@ -26,32 +26,35 @@ function main(args)
             help = "ss://chacha20-poly1305-ietf:imgk0000@127.0.0.1:8388\nor ss://chacha20-poly1305-ietf:imgk0000@:8388"
     end
 
-    parsed_args = parse_args(args, s)
     config = nothing
 
-    if haskey(parsed_args, "uri")
-        config, err = Shadowsocks.parseURI(parsed_args["uri"])
-        if err != nothing
-            main(String["--help"])
-        end
+    if args == String[]
+        main(String["--help"])
     else
-        ip = parse(IPAddr, parsed_args["server"])
-
-        if haskey(parsed_args, "listen")
-            config = SSClient(
-                ip, 
-                parsed_args["port"], 
-                parsed_args["listen"], 
-                uppercase(parsed_args["method"]), 
-                parsed_args["password"]
-            )
+        parsed_args = parse_args(args, s)
+        if haskey(parsed_args, "uri")
+            config, err = Shadowsocks.parseURI(parsed_args["uri"])
+            if err != nothing
+                main(String["--help"])
+            end
         else
-            config = SSServer(
-                ip, 
-                parsed_args["port"], 
-                uppercase(parsed_args["method"]), 
-                parsed_args["password"]
-            )
+            ip = parse(IPAddr, parsed_args["server"])
+            if haskey(parsed_args, "listen")
+                config = SSClient(
+                    ip, 
+                    parsed_args["port"], 
+                    parsed_args["listen"], 
+                    uppercase(parsed_args["method"]), 
+                    parsed_args["password"]
+                )
+            else
+                config = SSServer(
+                    ip, 
+                    parsed_args["port"], 
+                    uppercase(parsed_args["method"]), 
+                    parsed_args["password"]
+                )
+            end
         end
     end
 
@@ -60,6 +63,7 @@ function main(args)
     else
         Shadowsocks.@log("running shadowsocks client")
     end
+
     run(config)
 end
 

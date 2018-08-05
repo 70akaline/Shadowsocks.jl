@@ -7,4 +7,4 @@
 [![codecov.io](http://codecov.io/github/imgk/Shadowsocks.jl/coverage.svg?branch=master)](http://codecov.io/github/imgk/Shadowsocks.jl?branch=master)
 
 
-A Julia implementation of Shadowsocks. Compatible with Shadowsocks-libev.
+A Pure Julia implementation of Shadowsocks. Compatible with Shadowsocks-libev.

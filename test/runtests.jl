@@ -10,72 +10,69 @@ end
 # write your own tests here
 @test 1 == 1
 
-# basic funtion
-@test [0x00; 0x50] == Shadowsocks.@ToPort 80
-@test [0x00; 0x50] == Shadowsocks.toPort(80)
-@test [0xc0; 0xa8; 0x01; 0x01] == Shadowsocks.@ToIP IPv4(192,168,1,1)
-@test [0xc0; 0xa8; 0x01; 0x01] == Shadowsocks.toIP(IPv4(192,168,1,1))
+false && begin
+# Poly1305
+msg = b"Cryptographic Forum Research Group"
+msg2 = [ones(UInt8, 16); b"Cryptographic Forum Research Group"]
+key = [0x85; 0xd6; 0xbe; 0x78; 0x57; 0x55; 0x6d; 0x33; 
+    0x7f; 0x44; 0x52; 0xfe; 0x42; 0xd5; 0x06; 0xa8; 
+    0x01; 0x03; 0x80; 0x8a; 0xfb; 0x0d; 0xb2; 0xfd; 
+    0x4a; 0xbf; 0xf6; 0xaf; 0x41; 0x49; 0xf5; 0x1b]
+@test Poly1305.Poly1305MAC(msg, key) == [0xa8; 0x06; 0x1d; 0xc1; 0x30; 0x51; 0x36; 0xc6; 0xc2; 0x2b; 0x8b; 0xaf; 0x0c; 0x01; 0x27; 0xa9]
+@test Poly1305.Poly1305MAC([msg, ], key) == [0xa8; 0x06; 0x1d; 0xc1; 0x30; 0x51; 0x36; 0xc6; 0xc2; 0x2b; 0x8b; 0xaf; 0x0c; 0x01; 0x27; 0xa9]
 
-buff = Array{UInt8}(16)
-Shadowsocks.md5(buff, "Julia")
-@test [0x23; 0x44; 0x52; 0x1e; 0x38; 0x9d; 0x68; 0x97; 0xae; 0x7a; 0xf9; 0xab; 0xf1; 0x6e; 0x7c; 0xcc] == buff
+@test Poly1305.Poly1305MAC(msg2, key) == Poly1305.Poly1305MAC([ones(UInt8, 16), msg], key)
+@test Poly1305.Poly1305MAC([ones(UInt8, 1); zeros(UInt8, 15); ones(UInt8, 16)], key) == Poly1305.Poly1305MAC([ones(UInt8, 1), ones(UInt8, 16)], key)
 
-key = Shadowsocks.getkeys("CHACHA20-POLY1305", "Julia") 
-@test sizeof(key) == 32
-@test key == [0x23; 0x44; 0x52; 0x1e; 0x38; 0x9d; 0x68; 0x97; 0xae; 0x7a; 0xf9; 0xab; 0xf1; 0x6e; 0x7c; 0xcc; 0x24; 0x70; 0xab; 0x47; 0x41; 0xa3; 0x14; 0x7a; 0x17; 0x06; 0xd1; 0xf4; 0xfe; 0x28; 0xe8; 0x27]
-
-# read(io::TCPSocket, buff)
-server = listen(2000)
-conn = nothing
-buff = Array{UInt8}(1024)
-
-client = connect(2000)
-write(client, Array{UInt8}("Julia"))
-conn = accept(server)
-Shadowsocks.read(conn, buff)
-@test String(buff[1:5]) == "Julia"
-close(client)
-
-cipher, err = Shadowsocks.parseCipher(SSServer())
-cipher.eniv = cipher.deiv
-
-# decrypt, encrypt
-text = Array{UInt8}("Julia")
-nbytes, err = Shadowsocks.encrypt(buff, text, sizeof(text), cipher)
-nbytes, err = Shadowsocks.decrypt(buff, buff[1:nbytes], nbytes, cipher)
-@test text == buff[1:nbytes]
-
-# ssConn read
-client = connect(2000)
-nbytes, err = Shadowsocks.encrypt(buff, text, sizeof(text), cipher)
-write(client, buff[1:nbytes])
-conn = accept(server)
-ssConn = Shadowsocks.SSConn(conn, cipher)
-nbytes, err = Shadowsocks.read_not_aead(ssConn, buff)
-@test text == buff[1:5]
-close(client)
+end # end of test Poly1305
 
 
-# ssConn write
-client = connect(2000)
-conn = accept(server)
-ssConn = Shadowsocks.SSConn(conn, cipher)
-err = Shadowsocks.write_not_aead(ssConn, text, 5)
-nbytes, err = Shadowsocks.read(client, buff)
-nbytes, err = Shadowsocks.decrypt(buff, buff[1:nbytes], nbytes, cipher)
-@test text == buff[1:nbytes]
-close(client)
+text = b"julia00001111222233334444"
+c = zeros(UInt8, 1024)
+clen = Ref{UInt64}(0)
+m = text
+mlen = UInt64(length(m))
+ad = b"imgk0000"
+adlen = UInt64(length(ad))
+nsec = C_NULL
 
-# test ssclient
-@async run(SSServer())
-@async run(SSClient())
+key = rand(UInt8, 32)
+nonce = rand(UInt8, 12)
+Shadowsocks.crypto_aead_chacha20poly1305_ietf_encrypt(c, clen, m, mlen, ad, adlen, nsec, nonce, key)
+r1 = c[1:clen[]]
+Shadowsocks.crypto_aead_chacha20poly1305_ietf_encrypt(c, clen, m, mlen, ad, adlen, nsec, nonce, key, 1)
+r2 = c[1:clen[]]
 
-client = connect(getipaddr(), 1080)
-write(client, [0x05; 0x01; 0x00])
-@test readavailable(client) == [0x05; 0x00]
-write(client, [0x01; 0x01; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); Shadowsocks.toPort(2000)])
-@test readavailable(client) == [0x05; 0x00; 0x00; 0x01; Shadowsocks.toIP(getipaddr()); 0x04; 0x38]
-write(client, b"julia")
-conn = accept(server)
-@test String(readavailable(conn)) == "julia"
-close(client)
+@test r1 == r2
+
+ciphertext = r1
+c = ciphertext
+clen = UInt64(length(c))
+m = zeros(UInt8, 1024)
+mlen = Ref{UInt64}(0)
+ad = b"imgk0000"
+adlen = UInt64(length(ad))
+nsec = C_NULL
+
+Shadowsocks.crypto_aead_chacha20poly1305_ietf_decrypt(m, mlen, nsec, c, clen, ad, adlen, nonce, key)
+r1 = m[1:mlen[]]
+Shadowsocks.crypto_aead_chacha20poly1305_ietf_decrypt(m, mlen, nsec, c, clen, ad, adlen, nonce, key, 1)
+r2 = m[1:mlen[]]
+
+@test r1 == r2
+
+ssConn = Shadowsocks.SSConnection(
+	connect("www.baidu.com", 80),
+	Shadowsocks.Cipher(Shadowsocks.SSServer()),
+	rand(UInt8, 12),
+	rand(UInt8, 12),
+	rand(UInt8, 18),
+	rand(UInt8, 32),
+	rand(UInt8, 32)
+)
+
+buff = zeros(UInt8, 1024);
+buff2 = zeros(UInt8, 1024);
+
+Shadowsocks.encrypt(buff, b"julia", 5, ssConn)
+Shadowsocks.encrypt(buff2, b"julia", 5, ssConn, 1)
