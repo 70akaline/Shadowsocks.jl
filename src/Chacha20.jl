@@ -5,14 +5,22 @@ module Chacha20
 
 const ChachaKeyLen = 32
 const ChachaNonceLen = 12
+const OChachaNonceLen = 8
+const XChachaNonceLen = 24
 const ChachaState = Vector{UInt32}
 
 function lrot(x::UInt32, n::Integer)
     return x << n | x >> (32-n)
 end
 
+macro lrot(x, n)
+    quote
+        $(esc(x)) << $(esc(n)) | $(esc(x)) >> (32-$(esc(n)))
+    end
+end
+
 function newChachaState(key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8})
-    state = ChachaState(16)
+    state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]
 
@@ -31,21 +39,39 @@ function newChachaState(key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8
     return state
 end
 
+function newHChachaState()
+end
+
+function newXChachaState()
+end
+
+function newOChachaState()
+end
+
 function UpdateChachaState(state::ChachaState, counter::UInt32)
     state[13] = counter
     return state
 end
 
 function QuaterRound(a::UInt32, b::UInt32, c::UInt32, d::UInt32)
-    a += b; d ⊻= a; d = lrot(d, 16)
-    c += d; b ⊻= c; b = lrot(b, 12)
-    a += b; d ⊻= a; d = lrot(d, 8)
-    c += d; b ⊻= c; b = lrot(b, 7)
+    a += b; d ⊻= a; d = @lrot(d, 16)
+    c += d; b ⊻= c; b = @lrot(b, 12)
+    a += b; d ⊻= a; d = @lrot(d, 8)
+    c += d; b ⊻= c; b = @lrot(b, 7)
 
     return a, b, c, d
 end
 
-function Chacha20Block(state::ChachaState)
+macro QuaterRound(s, x, y, z, w)
+    quote
+        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = @lrot($(esc(s))[$(esc(w))], 16)
+        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = @lrot($(esc(s))[$(esc(y))], 12)
+        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = @lrot($(esc(s))[$(esc(w))], 8 )
+        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = @lrot($(esc(s))[$(esc(y))], 7 )
+    end
+end
+
+function Chacha20Block(state::ChachaState, test)
     s = deepcopy(state)
 
     for i in 1:10
@@ -60,13 +86,39 @@ function Chacha20Block(state::ChachaState)
         s[4], s[5], s[10], s[15] = QuaterRound(s[4], s[5], s[10], s[15])
     end
 
-    for i in 1:16
-        s[i] += state[i]
-    end
+    s += state
 
     map!(htol, s, s)
 
     return reinterpret(UInt8, s)
+end
+
+function Chacha20Block(state::ChachaState)
+    s = deepcopy(state)
+
+    for i in 1:10
+        @QuaterRound(s, 1, 5, 9, 13)
+        @QuaterRound(s, 2, 6, 10, 14)
+        @QuaterRound(s, 3, 7, 11, 15)
+        @QuaterRound(s, 4, 8, 12, 16)
+
+        @QuaterRound(s, 1, 6, 11, 16)
+        @QuaterRound(s, 2, 7, 12, 13)
+        @QuaterRound(s, 3, 8, 9, 14)
+        @QuaterRound(s, 4, 5, 10, 15)
+    end
+
+    s += state
+
+    map!(htol, s, s)
+
+    return reinterpret(UInt8, s)
+end
+
+function HChacha10Block()
+end
+
+function XChacha10Block()
 end
 
 function Chacha20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8}, from::Vector{UInt8})
@@ -99,5 +151,8 @@ Chacha20Encrypt(ciphertext::Vector{UInt8}, key::Vector{UInt8}, nonce::Vector{UIn
 
 Chacha20Decrypt(text::Vector{UInt8}, key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8}, ciphertext::Vector{UInt8}) = Chacha20Calculate(text, key, counter, nonce, ciphertext)
 Chacha20Decrypt(text::Vector{UInt8}, key::Vector{UInt8}, nonce::Vector{UInt8}, ciphertext::Vector{UInt8}) = Chacha20Decrypt(text, key, 0x00000001, nonce, ciphertext)
+
+function XChacha20Calculate()
+end
 
 end # end module

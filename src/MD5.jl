@@ -1,7 +1,6 @@
 
 module MD5
 
-
 # MD5 Function, Copy from JanMD5.jl
 
 mutable struct MD5_CTX

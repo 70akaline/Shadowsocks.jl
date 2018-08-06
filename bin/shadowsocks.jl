@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
 using Shadowsocks
+using Sockets
 using ArgParse
 
 function main(args)
@@ -38,7 +39,7 @@ function main(args)
                 main(String["--help"])
             end
         else
-            ip = parse(IPAddr, parsed_args["server"])
+            ip = parse(Sockets.IPAddr, parsed_args["server"])
             if haskey(parsed_args, "listen")
                 config = SSClient(
                     ip, 
@@ -59,9 +60,9 @@ function main(args)
     end
 
     if config.lisPort == nothing
-        Shadowsocks.@log("running shadowsocks server")
+        Shadowsocks.@terminal("running shadowsocks server")
     else
-        Shadowsocks.@log("running shadowsocks client")
+        Shadowsocks.@terminal("running shadowsocks client")
     end
 
     run(config)

@@ -4,10 +4,10 @@ module Poly1305
 # ========Poly1305============
 
 function LeBytes(num::BigInt, n::Integer)
-    x = Vector{UInt8}(n)
+    x = Vector{UInt8}(undef, n)
 
     for i in 1:n
-        x[i] = UInt8((num >> ((i-1) * 8)) & 0xff)
+        x[i] = UInt8((num >> ((i-1) << 3)) & 0xff)
     end
 
     return x
@@ -22,9 +22,10 @@ function Poly1305Cal(r::BigInt, a::BigInt, p::BigInt, msg::Vector{UInt8}, isover
 
     for i in 1:nblock
         n = BigInt(ltoh(unsafe_load(ptr, i))) + BigInt(1) << 128
-        a = (a + n) * r % p
-    end
 
+        a = (a + n) * r % p
+
+    end
     left = len % 16
 
     if left != 0
