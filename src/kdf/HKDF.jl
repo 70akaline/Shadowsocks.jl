@@ -1,8 +1,6 @@
 
 module HKDF
 
-# package code goes here
-
 using SHA
 
 const HMACFUNC = Dict{AbstractString, Function}(

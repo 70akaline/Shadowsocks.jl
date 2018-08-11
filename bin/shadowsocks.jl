@@ -7,7 +7,7 @@ using ArgParse
 function main(args)
     s = ArgParseSettings(description = "This is a julia implementation of shadowsocks",
         commands_are_required = false,
-        version = "0.1",
+        version = "0.0.1",
         add_version = false)
 
     @add_arg_table s begin
@@ -20,9 +20,9 @@ function main(args)
             help = "shadowsocks listen port"
             arg_type = Int
         "--method", "-m"
-            help = "encryption method\nCHACHA20-POLY1305-IETF, XCHACHA20-POLY1305-IETF, AES-256-GCM"
+            help = "encryption method\nCHACHA20-POLY1305-IETF, XCHACHA20-POLY1305-IETF"
         "--password", "-k"
-            help = "access password, [a-zA-Z_0-9]+"
+            help = "access password, like Pass1234"
         "--uri", "-c"
             help = "ss://chacha20-poly1305-ietf:imgk0000@127.0.0.1:8388\nor ss://chacha20-poly1305-ietf:imgk0000@:8388"
     end
@@ -33,7 +33,7 @@ function main(args)
         main(String["--help"])
     else
         parsed_args = parse_args(args, s)
-        if haskey(parsed_args, "uri")
+        if parsed_args["uri"] != nothing
             config, err = Shadowsocks.parseURI(parsed_args["uri"])
             if err != nothing
                 main(String["--help"])

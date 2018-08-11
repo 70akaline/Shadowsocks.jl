@@ -1,4 +1,4 @@
-__precompile__(true)
+__precompile__(false)
 # 
 #
 #  
@@ -8,10 +8,15 @@ __precompile__(true)
 # 
 # 
 # 
-
+#
 module Shadowsocks
 
 export SSServer, SSClient, run
+
+using Sockets
+using Dates
+
+include("Crypto.jl")
 
 import Base.run
 import Base.read
@@ -19,21 +24,17 @@ import Base.write
 import Base.isopen
 import Base.close
 
-using Sockets
-using Dates
-using Libdl
-
 const Bytes = Array{UInt8}
 const MaxSize = 0x3FFF
 const MD5Len = 16
 const METHOD = Dict{String, Dict{String, Integer}}(
     "CHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)),
-    "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(24)),
-    "AES-256-GCM" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(12)))
+    "XCHACHA20-POLY1305-IETF" => Dict{String, Integer}("KEYLEN" => Csize_t(32), "TAGLEN" => Csize_t(16), "IVLEN" => Csize_t(24))
+)
 
 macro terminal(message)
     quote
-        println(stdout, Dates.now(), " : ", $message)
+        println(stdout, Dates.now(), " : ", $(esc(message)))
     end
 end
 
@@ -71,7 +72,7 @@ end
 function Cipher(config::SSConfig)
     cipher = Cipher(
         config.method,
-        genkeys(METHOD[config.method]["KEYLEN"], config.password),
+        genkey(METHOD[config.method]["KEYLEN"], config.password),
         METHOD[config.method]["KEYLEN"],
         METHOD[config.method]["IVLEN"],
         METHOD[config.method]["TAGLEN"],
@@ -79,14 +80,11 @@ function Cipher(config::SSConfig)
         nothing)
 
     if config.method == "CHACHA20-POLY1305-IETF"
-        cipher.encrypt = crypto_aead_chacha20poly1305_ietf_encrypt
-        cipher.decrypt = crypto_aead_chacha20poly1305_ietf_decrypt
+        cipher.encrypt = Crypto.Chacha20_Poly1305_IETF.Encrypt
+        cipher.decrypt = Crypto.Chacha20_Poly1305_IETF.Decrypt
     elseif config.method == "XCHACHA20-POLY1305-IETF"
-        cipher.encrypt = crypto_aead_xchacha20poly1305_ietf_encrypt
-        cipher.decrypt = crypto_aead_xchacha20poly1305_ietf_decrypt
-    elseif config.method == "AES-256-GCM"
-        cipher.encrypt = crypto_aead_aes256gcm_encrypt
-        cipher.decrypt = crypto_aead_aes256gcm_decrypt
+        cipher.encrypt = Crypto.XChacha20_Poly1305_IETF.Encrypt
+        cipher.decrypt = Crypto.XChacha20_Poly1305_IETF.Decrypt
     end
 
     return cipher
@@ -144,7 +142,7 @@ function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Nothing}
         return nothing
     end
 
-    nybtes isa Integer && begin # Client
+    if nbytes isa Integer
         salt = rand(UInt8, saltlen)
         ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
         if err != nothing
@@ -296,34 +294,7 @@ function parseURI(text::String)
     end
 end
 
-# ==================
-
-include("Crypto.jl")
-
-function crypto_aead_chacha20poly1305_ietf_encrypt(
-    c::Bytes, clen::Ref{UInt64}, m::Bytes, mlen::UInt64, ad::Bytes, adlen::UInt64, nsec::Ptr{Nothing}, npub::Bytes, key::Bytes)
-
-    clen[], err = Crypto.Chacha20_IETF_Poly1305_Encrypt(c, key, npub, unsafe_wrap(Array{UInt8}, pointer(m), mlen), UInt8[])
-    if err != nothing
-        return nothing, "Encrypt Error"
-    end
-    
-    return clen[], nothing
-end
-
-function crypto_aead_chacha20poly1305_ietf_decrypt(
-    m::Bytes, mlen::Ref{UInt64}, nsec::Ptr{Nothing}, c::Bytes, clen::UInt64, ad::Bytes, adlen::UInt64, npub::Bytes, key::Bytes)
-
-    mlen[], err = Crypto.Chacha20_IETF_Poly1305_Decrypt(m, key, npub, unsafe_wrap(Array{UInt8}, pointer(c), clen), UInt8[])
-    if err != nothing
-        return nothing, "Decrypt Error"
-    end
-    
-    return mlen[], nothing
-end 
-
 # ===HKDF-SHA1======
-include("HKDF.jl")
 
 const INFO = b"ss-subkey"[:]
 
@@ -337,34 +308,24 @@ function gensubkey(salt::Bytes, masterkey::Bytes, keylen::Integer)
 end
 
 function hkdf_sha1(salt::Bytes, ikm::Bytes, okmlen::Integer)
-	return HKDF.hkdf("SHA1", salt, ikm, INFO, okmlen), nothing
+	return Crypto.HKDF.hkdf("SHA1", salt, ikm, INFO, okmlen), nothing
 end
 # ==================
 
-# ========MD5=========
-
-include("MD5.jl")
-
-function md5(buff::Bytes, text::Bytes)
-    buff[1:MD5Len] = MD5.md5(text)
-end
-
-# ====================
-
-
-function genkeys(keylen::Csize_t, password::String)
+function genkey(keylen::Csize_t, password::String)
     cnt = Integer(ceil(keylen/MD5Len))
     tmp = Bytes(undef, cnt * MD5Len)
 
-    buff = Bytes(undef, MD5Len + sizeof(password))
-    pass = unsafe_wrap(Bytes, pointer(password), sizeof(password))
-    buff[MD5Len+1:end] = pass
-    md5(buff, pass)
-    tmp[1:MD5Len] = buff[1:MD5Len]
+    len = sizeof(password)
+    buff = Bytes(undef, MD5Len + len)
+    pass = unsafe_wrap(Bytes, pointer(password), len)
+    buff[MD5Len+1 : end] = pass
+    buff[1 : MD5Len] = Crypto.MD5.md5(pass)
+    tmp[1 : MD5Len] = buff[1 : MD5Len]
 
-    for i in 2:cnt
-        md5(buff, buff)
-        tmp[MD5Len * (i-1) + 1 : MD5Len * i] = buff[1:MD5Len]
+    for i in 2 : cnt
+        buff[1 : MD5Len] = Crypto.MD5.md5(buff)
+        tmp[MD5Len * (i-1) + 1 : MD5Len * i] = buff[1 : MD5Len]
     end
 
     return tmp[1:keylen]
@@ -398,8 +359,6 @@ function read(io::TCPSocket, buff::Bytes, n::Integer)
     ptr = 1
 
     while left > 0
-        isopen(io) || return nothing, "TCPSocket Closed"
-
         try
             eof(io)
         catch err
@@ -413,10 +372,10 @@ function read(io::TCPSocket, buff::Bytes, n::Integer)
         end
 
         if nbytes >= left
-            buff[ptr:ptr + left - 1] = read(io, left)
+            isopen(io) ? buff[ptr:ptr + left - 1] = read(io, left) : return nothing, "TCPSocket Closed"
             break
         else
-            buff[ptr:ptr + nbytes - 1] = read(io, nbytes)
+            isopen(io) ? buff[ptr:ptr + nbytes - 1] = read(io, nbytes) : return nothing, "TCPSocket Closed"
             ptr += nbytes
             left -= nbytes
         end
@@ -440,11 +399,13 @@ function read(ssConn::SSConnection, buff::Bytes)
     if err != nothing
         return nothing, err
     end
+    ++(ssConn.ivDecrypt)
 
     nbytes, err = read_stream(ssConn, buff, UInt16(buff[1]) << 8 + buff[2] + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
     end
+    ++(ssConn.ivDecrypt)
 
     return nbytes, nothing
 end
@@ -455,11 +416,13 @@ function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
     if err != nothing
         return err
     end
+    ++(ssConn.ivEncrypt)
 
     err = write_stream(ssConn, buff, nbytes)
     if err != nothing 
         return err
     end
+    ++(ssConn.ivEncrypt)
 
     return nothing
 end
@@ -475,7 +438,6 @@ function read_stream(ssConn::SSConnection, buff::Bytes, n::Integer)
         return nothing, err
     end
 
-    ++(ssConn.ivDecrypt)
     return nbytes, nothing
 end
 
@@ -490,32 +452,25 @@ function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
         return err
     end
 
-    ++(ssConn.ivEncrypt)
     return nothing
 end
 
 function encrypt(buff::Bytes, text::Bytes, textlen::Integer, ssConn::SSConnection)
-    nbytes = Ref{UInt64}(0)
-    ~, err = ssConn.cipher.encrypt(
-        buff, nbytes, text, Csize_t(textlen), ssConn.keyEncrypt, Csize_t(0), C_NULL, ssConn.ivEncrypt, ssConn.keyEncrypt)
-
+    nbytes, err = ssConn.cipher.encrypt(buff, ssConn.keyEncrypt, ssConn.ivEncrypt, unsafe_wrap(Array{UInt8}, pointer(text), textlen), UInt8[])
     if err != nothing
         return nothing, err
     end
 
-    return nbytes[], nothing
+    return nbytes, nothing
 end
 
 function decrypt(buff::Bytes, ciphertext::Bytes, ciphertextlen::Integer, ssConn::SSConnection)
-    nbytes = Ref{UInt64}(0)
-    ~, err = ssConn.cipher.decrypt(
-        buff, nbytes, C_NULL, ciphertext, Csize_t(ciphertextlen), ssConn.keyDecrypt, Csize_t(0), ssConn.ivDecrypt, ssConn.keyDecrypt)
-
+    nbytes, err = ssConn.cipher.decrypt(buff, ssConn.keyDecrypt, ssConn.ivDecrypt, unsafe_wrap(Array{UInt8}, pointer(ciphertext), ciphertextlen), UInt8[])
     if err != nothing
         return nothing, err
     end
 
-    return nbytes[], nothing
+    return nbytes, nothing
 end
 
 function ioCopy(from::Union{SSConnection, TCPSocket}, to::Union{SSConnection, TCPSocket})
@@ -536,19 +491,19 @@ end
 function gethost(buff::Bytes)
     host, port = nothing, nothing
     if buff[1] == 0x01
-        host = IPv4(ntoh(unsafe_load(Ptr{UInt32}(pointer(buff[2:5])))))
-        port = UInt16(buff[6]) << 8 + buff[7]
+        host = IPv4(ntoh(unsafe_load(Ptr{UInt32}(pointer(buff) + 1))))
+        port = UInt16(buff[6]) << 8 | buff[7]
     elseif buff[1] == 0x03
         len = buff[2]
         host = try
-            getaddrinfo(String(buff[3:len+2]))
+            getaddrinfo(String(unsafe_wrap(Array{UInt8}, pointer(buff) + 2, len)))
         catch err
             return nothing, nothing, err
         end
-        port = UInt16(buff[len+3]) << 8 + buff[len+4]
+        port = UInt16(buff[len+3]) << 8 | buff[len+4]
     elseif buff[1] == 0x04
-        host = IPv6(ntoh(unsafe_load(Ptr{UInt128}(pointer(buff[2:17])))))
-        port = UInt16(buff[18]) << 8 + buff[19]
+        host = IPv6(ntoh(unsafe_load(Ptr{UInt128}(pointer(buff) + 1))))
+        port = UInt16(buff[18]) << 8 | buff[19]
     end
 
     return host, port, nothing
@@ -616,7 +571,7 @@ function handShake(conn::TCPSocket, buff::Bytes)
             return err
         end
     else 
-        err = isopen(conn) && write(conn, [0x05; 0xFF], 2)
+        err = write(conn, [0x05; 0xFF], 2)
         return "Not a Valid Authentication"
     end
 
@@ -696,6 +651,7 @@ end
 function runServer(config::SSConfig)
     cipher = Cipher(config)
 
+    # @async udpServer()
     tcpServer(config, cipher)
 end
 
@@ -729,6 +685,7 @@ end
 function runClient(config::SSConfig)
     cipher = Cipher(config)
 
+    # async udpClient()
     tcpClient(config, cipher)
 end
 
