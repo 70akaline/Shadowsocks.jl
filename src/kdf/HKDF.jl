@@ -30,10 +30,15 @@ const HASHLEN = Dict{AbstractString, Integer}(
 function hkdf(sha::AbstractString, salt::Vector{UInt8}, ikm::Vector{UInt8}, info::Vector{UInt8}, keylen::Integer)
     prk, err = HKDF_Extract(sha, salt, ikm)
     if err != nothing
-        return err
+        return nothing, err
+    end
+    
+    okm, err = HKDF_Expand(sha, prk, info, keylen)
+    if err != nothing
+        return nothing, err
     end
 
-    return HKDF_Expand(sha, prk, info, keylen)
+    return okm, nothing
 end
 
 function HKDF_Extract(sha::AbstractString, salt::Vector{UInt8}, ikm::Vector{UInt8})
@@ -57,7 +62,7 @@ function HKDF_Expand(sha::AbstractString, prk::Vector{UInt8}, info::Vector{UInt8
         key[(i-1)*hashlen + 1 : i * hashlen] = T
     end
 
-    return key[1:keylen]
+    return key[1:keylen], nothing
 end
 
 end # module

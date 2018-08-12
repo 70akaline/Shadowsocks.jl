@@ -108,69 +108,82 @@ function isopen(ssConn::SSConnection)
     return isopen(ssConn.conn)
 end
 
-function init(ssConn::SSConnection, buff::Bytes, nbytes::Union{Integer, Nothing})
+function init_read(ssConn::SSConnection, buff::Bytes) # Server
     saltlen = max(16, ssConn.cipher.keylen)
 
-    nbytes == nothing && begin # Server
-        salt = Bytes(undef, saltlen)
-        nbytes, err = read(ssConn.conn, salt, saltlen)
-        if err != nothing
-            return err
-        end
-
-        ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-        if err != nothing
-            return err
-        end
-
-        nbytes, err = read(ssConn, buff)
-        if err != nothing
-            return err
-        end
-
-        salt[:] = rand(UInt8, ssConn.cipher.keylen)
-        ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-        if err != nothing
-            return err
-        end
-
-        err = write(ssConn.conn, salt, saltlen)
-        if err != nothing
-            return err
-        end
-
-        return nothing
+    salt = Bytes(undef, saltlen)
+    nbytes, err = read(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
     end
 
-    if nbytes isa Integer
-        salt = rand(UInt8, saltlen)
-        ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-        if err != nothing
-            return err
-        end
-
-        err = write(ssConn.conn, salt, saltlen)
-        if err != nothing
-            return err
-        end
-
-        err = write(ssConn, buff, nbytes)
-        if err != nothing
-            return err
-        end
-
-        nbytes, err = read(ssConn.conn, salt, saltlen)
-        if err != nothing
-            return err
-        end
-
-        ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-        if err != nothing
-            return err
-        end
-
-        return nothing
+    ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
     end
+
+    nbytes, err = read(ssConn, buff)
+    if err != nothing
+        return err
+    end
+
+    return nothing
+end
+
+function init_write(ssConn::SSConnection) # Server
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    salt = rand(UInt8, saltlen)
+    ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
+    end
+
+    err = write(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
+    end
+
+    return nothing
+end
+
+function init_read(ssConn::SSConnection) # Client
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    salt = Bytes(undef, saltlen)
+    nbytes, err = read(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
+    end
+
+    ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
+    end
+
+    return nothing
+end
+
+function init_write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    salt = rand(UInt8, saltlen)
+    ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
+    end
+
+    err = write(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
+    end
+
+    err = write(ssConn, buff, nbytes)
+    if err != nothing
+        return err
+    end
+    
+    return nothing
 end
 
 # ==================
@@ -296,10 +309,11 @@ end
 
 # ===HKDF-SHA1======
 
-const INFO = b"ss-subkey"[:]
+const INFO = Array{UInt8}("ss-subkey")
 
 function gensubkey(salt::Bytes, masterkey::Bytes, keylen::Integer)
-    subkey, err = hkdf_sha1(salt, masterkey, keylen)
+    # subkey, err = hkdf_sha1(salt, masterkey, keylen)
+    subkey, err = Crypto.HKDF.hkdf("SHA1", salt, masterkey, INFO, keylen)
     if err != nothing
         return nothing, "Generate Sub Key Error"
     end
@@ -307,15 +321,13 @@ function gensubkey(salt::Bytes, masterkey::Bytes, keylen::Integer)
     return subkey, nothing
 end
 
-function hkdf_sha1(salt::Bytes, ikm::Bytes, okmlen::Integer)
-	return Crypto.HKDF.hkdf("SHA1", salt, ikm, INFO, okmlen), nothing
-end
 # ==================
 
-function genkey(keylen::Csize_t, password::String)
-    cnt = Integer(ceil(keylen/MD5Len))
-    tmp = Bytes(undef, cnt * MD5Len)
-
+function genkey(keylen::UInt64, password::String)
+    cnt = fld(keylen, MD5Len)
+    left = keylen % MD5Len
+    tmp = Bytes(undef, cnt * MD5Len + left)
+    
     len = sizeof(password)
     buff = Bytes(undef, MD5Len + len)
     pass = unsafe_wrap(Bytes, pointer(password), len)
@@ -328,7 +340,10 @@ function genkey(keylen::Csize_t, password::String)
         tmp[MD5Len * (i-1) + 1 : MD5Len * i] = buff[1 : MD5Len]
     end
 
-    return tmp[1:keylen]
+    buff[1 : MD5Len] = Crypto.MD5.md5(buff)
+    tmp[MD5Len * cnt + 1 : MD5Len * cnt + left] = buff[1 : left]
+
+    return tmp
 end
 
 function read(io::TCPSocket, buff::Bytes)
@@ -386,7 +401,7 @@ end
 
 function write(io::TCPSocket, buff::Bytes, nbytes::Integer)
     try 
-        isopen(io) ? write(io, buff[1:nbytes]) : return "Connection Closed"
+        isopen(io) ? write(io, unsafe_wrap(Array{UInt8}, pointer(buff), nbytes)) : return "Connection Closed"
     catch err 
         return err 
     end
@@ -528,30 +543,36 @@ function connectRemote(buff::Bytes)
     return client, nothing
 end
 
-function handleConnection(ssConn::SSConnection)
-    client = nothing
+function handleConnection(ssConn::SSConnection) # Server
+    remote = nothing
 
     while true
         buff = Bytes(undef, 262)
 
-        err = init(ssConn, buff, nothing)
+        err = init_read(ssConn, buff)
         if err != nothing
             break
         end
 
-        client, err = connectRemote(buff)
+        remote, err = connectRemote(buff)
+        if err != nothing
+            break
+        end
+
+        @async ioCopy(ssConn, remote)
+
+        err = init_write(ssConn)
         if err != nothing
             break
         end
 
         buff = nothing
-        @async ioCopy(ssConn, client)
-        ioCopy(client, ssConn)
+        ioCopy(remote, ssConn)
 
         break
     end
 
-    client != nothing && close(client)
+    remote != nothing && close(remote)
     close(ssConn)
 end
 
@@ -608,7 +629,7 @@ function handShake(conn::TCPSocket, buff::Bytes)
     return nbytes
 end
 
-function handleConnection(conn::TCPSocket, ssConn::SSConnection)
+function handleConnection(conn::TCPSocket, ssConn::SSConnection) # Client
     while true
         buff = Bytes(undef, 262)
         nbytes = handShake(conn, buff)
@@ -616,13 +637,19 @@ function handleConnection(conn::TCPSocket, ssConn::SSConnection)
             break
         end
 
-        err = init(ssConn, buff, nbytes)
+        err = init_write(ssConn, buff, nbytes)
+        if err != nothing
+            break
+        end
+
+        @async ioCopy(conn, ssConn)
+
+        err = init_read(ssConn)
         if err != nothing
             break
         end
 
         buff = nothing
-        @async ioCopy(conn, ssConn)
         ioCopy(ssConn, conn)
 
         break
@@ -685,7 +712,7 @@ end
 function runClient(config::SSConfig)
     cipher = Cipher(config)
 
-    # async udpClient()
+    # @async udpClient()
     tcpClient(config, cipher)
 end
 
