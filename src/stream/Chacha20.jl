@@ -131,13 +131,13 @@ function Chacha20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt3
 
     nblock > 0x00000000 && for i in 0x00000000:nblock-0x00000001
         keystream = Chacha20Block(UpdateChachaState(state, counter+i))
-        to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
+        @inbounds to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
     end
 
     left = len % 64
     if left != 0
         keystream = Chacha20Block(UpdateChachaState(state, counter+nblock))
-        to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
+        @inbounds to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
     end
 
     return len
@@ -159,13 +159,13 @@ function XChacha20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt
 
     nblock > 0x0000000000000000 && for i in 0x0000000000000000:nblock-0x0000000000000001
         keystream = XChacha20Block(UpdateOChachaState(state, counter+i))
-        to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
+        @inbounds to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
     end
 
     left = len % 64
     if left != 0
         keystream = XChacha20Block(UpdateOChachaState(state, counter+nblock))
-        to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
+        @inbounds to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
     end
 
     return len
@@ -187,13 +187,13 @@ function OChacha20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt
 
     nblock > 0x0000000000000000 && for i in 0x0000000000000000:nblock-0x0000000000000001
         keystream = OChacha20Block(UpdateOChachaState(state, counter+i))
-        to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
+        @inbounds to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
     end
 
     left = len % 64
     if left != 0
         keystream = OChacha20Block(UpdateOChachaState(state, counter+nblock))
-        to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
+        @inbounds to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
     end
 
     return len

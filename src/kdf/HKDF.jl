@@ -53,16 +53,19 @@ end
 
 function HKDF_Expand(sha::AbstractString, prk::Vector{UInt8}, info::Vector{UInt8}, keylen::Integer)
     hashlen = HASHLEN[sha]
-    n = UInt8(ceil(keylen/hashlen))
-    key = Vector{UInt8}(undef, n * hashlen)
+    n = UInt8(cld(keylen, hashlen))
+    left = keylen % hashlen
+    key = Vector{UInt8}(undef, n * hashlen + left)
 
     T = UInt8[]
     for i in 0x01:n
         T = HMACFUNC[sha](prk, [T; info; i])
-        key[(i-1)*hashlen + 1 : i * hashlen] = T
+        key[(i-1) * hashlen + 1 : i * hashlen] = T
     end
 
-    return key[1:keylen], nothing
+    key[n * hashlen + 1 : n * hashlen + left] = HMACFUNC[sha](prk, [T; info; n])[1 : left]
+
+    return key, nothing
 end
 
 end # module

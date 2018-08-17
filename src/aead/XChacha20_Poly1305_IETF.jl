@@ -1,8 +1,8 @@
 
 module XChacha20_Poly1305_IETF
 
-include(joinpath(@__DIR__, "..", "stream", "Chacha20.jl"))
-include(joinpath(@__DIR__, "..", "mac", "Poly1305.jl"))
+using ..Chacha20
+using ..Poly1305
 
 function LeBytes(num::UInt64, n::Integer)
     return unsafe_wrap(Array{UInt8}, Ptr{UInt8}(pointer([htol(num); ])), n)

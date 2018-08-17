@@ -8,3 +8,4 @@
 
 
 A Pure Julia implementation of Shadowsocks. Compatible with Shadowsocks-libev.
+Not test throughly.

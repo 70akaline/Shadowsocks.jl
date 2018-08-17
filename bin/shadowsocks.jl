@@ -3,6 +3,7 @@
 using Shadowsocks
 using Sockets
 using ArgParse
+using FileWatching
 
 function main(args)
     s = ArgParseSettings(description = "This is a julia implementation of shadowsocks",
@@ -20,11 +21,13 @@ function main(args)
             help = "shadowsocks listen port"
             arg_type = Int
         "--method", "-m"
-            help = "encryption method\nCHACHA20-POLY1305-IETF, XCHACHA20-POLY1305-IETF"
+            help = "encryption method\nchacha20-poly1305-ietf, xchacha20-poly1305-ietf"
         "--password", "-k"
             help = "access password, like Pass1234"
         "--uri", "-c"
             help = "ss://chacha20-poly1305-ietf:imgk0000@127.0.0.1:8388\nor ss://chacha20-poly1305-ietf:imgk0000@:8388"
+        "--config-file", "-f"
+            help = "use config file"
     end
 
     config = nothing
@@ -33,7 +36,9 @@ function main(args)
         main(String["--help"])
     else
         parsed_args = parse_args(args, s)
-        if parsed_args["uri"] != nothing
+        if parsed_args["config-file"] != nothing
+            config = Base.Filesystem.abspath(parsed_args["config-file"])
+        elseif parsed_args["uri"] != nothing
             config, err = Shadowsocks.parseURI(parsed_args["uri"])
             if err != nothing
                 main(String["--help"])
@@ -59,13 +64,26 @@ function main(args)
         end
     end
 
-    if config.lisPort == nothing
+    if config isa Array{Shadowsocks.SSConfig}
+        Shadowsocks.@terminal("running shadowsocks client")
+        run(config)
+    elseif config isa String
+        ch = Channel{Dict{String, Any}}(1)
+        @async while true
+            put!(ch, Shadowsocks.readConfigFile(config))
+            watch_file(config, -1)
+        end
+
         Shadowsocks.@terminal("running shadowsocks server")
+        Shadowsocks.@terminal("watching config file - $config")
+        run(ch)
+    elseif config.lisPort == nothing
+        Shadowsocks.@terminal("running shadowsocks server")
+        run(config, true)
     else
         Shadowsocks.@terminal("running shadowsocks client")
+        run(config, false)
     end
-
-    run(config)
 end
 
 main(ARGS)
