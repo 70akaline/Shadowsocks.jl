@@ -63,7 +63,7 @@ function HKDF_Expand(sha::AbstractString, prk::Vector{UInt8}, info::Vector{UInt8
         key[(i-1) * hashlen + 1 : i * hashlen] = T
     end
 
-    key[n * hashlen + 1 : n * hashlen + left] = HMACFUNC[sha](prk, [T; info; n])[1 : left]
+    left != 0 && begin key[n * hashlen + 1 : n * hashlen + left] = HMACFUNC[sha](prk, [T; info; n])[1 : left] end
 
     return key, nothing
 end

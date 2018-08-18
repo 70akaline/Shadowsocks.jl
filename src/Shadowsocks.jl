@@ -396,7 +396,7 @@ end
         tmp[MD5Len * (i-1) + 1 : MD5Len * i] = buff[1 : MD5Len]
     end
 
-    tmp[MD5Len * cnt + 1 : MD5Len * cnt + left] = Crypto.MD5.md5(buff)[1 : left]
+    left != 0 && begin tmp[MD5Len * cnt + 1 : MD5Len * cnt + left] = Crypto.MD5.md5(buff)[1 : left] end
 
     return tmp
 end
