@@ -1,24 +1,20 @@
 
 module Salsa20
 
+using ..Common
+
 const SalsaKeylen = 32
 const SalsaNonceLen = 8
 const XSalsaNonceLen = 24
 const SalsaState = Vector{UInt32}
 
-macro lrot(x, n)
-    quote
-        $(esc(x)) << $(esc(n)) | $(esc(x)) >> (32-$(esc(n)))
-    end
-end
-
 function newSalsaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt8})
     s = SalsaState(undef, 16)
 
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    s[[2:5; 12:15]] = map(ltoh, unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    s[[2:5; 12:15]] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
     s[9:10] = UInt32[counter & 0xffff; counter >> 32]
-    s[7:8] = map(ltoh, unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
+    s[7:8] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
 
     return s
 end
@@ -27,8 +23,8 @@ function newHSalsaState(key::Vector{UInt8}, nonce::Vector{UInt8})
     s = SalsaState(undef, 16)
 
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    s[[2:5; 12:15]] = map(ltoh, unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    s[7:10] = map(ltoh, unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
+    s[[2:5; 12:15]] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    s[7:10] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
 
     return s
 end
@@ -39,7 +35,7 @@ function newXSalsaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt8
     s[[2:5; 12:15]] = s[[1; 6; 11; 16; 7; 8; 9; 10]]
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
     s[9:10] = UInt32[counter & 0xffff; counter >> 32]
-    s[7:8] = map(ltoh, unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
+    s[7:8] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
 
     return s
 end
@@ -51,10 +47,10 @@ end
 
 macro QuaterRound(s, x, y, z, w)
     quote
-        t = $(esc(s))[$(esc(x))] + $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= @lrot(t, 7 )
-        t = $(esc(s))[$(esc(y))] + $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(z))] ⊻= @lrot(t, 9 )
-        t = $(esc(s))[$(esc(z))] + $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= @lrot(t, 13)
-        t = $(esc(s))[$(esc(w))] + $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(x))] ⊻= @lrot(t, 18)
+        t = $(esc(s))[$(esc(x))] + $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= Common.@lrot(t, 7 )
+        t = $(esc(s))[$(esc(y))] + $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(z))] ⊻= Common.@lrot(t, 9 )
+        t = $(esc(s))[$(esc(z))] + $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= Common.@lrot(t, 13)
+        t = $(esc(s))[$(esc(w))] + $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(x))] ⊻= Common.@lrot(t, 18)
     end
 end
 
@@ -74,8 +70,7 @@ function Salsa20Block(state::SalsaState)
     end
 
     s += state
-
-    map!(htol, s, s)
+    s = Common.little!(s)
 
     return reinterpret(UInt8, s)
 end

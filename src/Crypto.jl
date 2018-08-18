@@ -1,6 +1,32 @@
 
 module Crypto
 
+module Common
+
+macro lrot(x, n)
+    quote
+        $(esc(x)) << $(esc(n)) | $(esc(x)) >> (32-$(esc(n)))
+    end
+end
+
+@inline function LeBytes(num::UInt64, n::Integer)
+    return unsafe_wrap(Array{UInt8}, Ptr{UInt8}(pointer([htol(num); ])), n)
+end
+
+@static if Base.ENDIAN_BOM == 0x04030201
+	global little(x) = x
+	global little!(x) = x
+	global big(x) = begin map(hton, x); x end
+	global big!(x) = begin map!(hton, x, x); x end
+elseif Base.ENDIAN_BOM == 0x01020304
+	global little(x) = begin map(htol, x); x end
+	global little!(x) = begin map!(htol, x, x); x end
+	global big(x) = x
+	global big!(x) = x
+end
+
+end # module
+
 # Salsa20
 include(joinpath(@__DIR__, "stream", "Salsa20.jl"))
 
