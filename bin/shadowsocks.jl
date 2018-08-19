@@ -8,7 +8,7 @@ using FileWatching
 function main(args)
     s = ArgParseSettings(description = "This is a julia implementation of shadowsocks",
         commands_are_required = false,
-        version = "0.0.1",
+        version = "0.0.2",
         add_version = false)
 
     @add_arg_table s begin

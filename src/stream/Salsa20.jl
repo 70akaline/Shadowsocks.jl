@@ -40,7 +40,7 @@ function newXSalsaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt8
     return s
 end
 
-function UpdateSalsaState(state::SalsaState, counter::UInt64)
+@inline function UpdateSalsaState(state::SalsaState, counter::UInt64)
     state[9:10] = UInt32[counter & 0xffff; counter >> 32]
     return state
 end
@@ -91,7 +91,7 @@ function HSalsa20Block(state::SalsaState)
     return state
 end
 
-function XSalsa20Block(state::SalsaState)
+@inline function XSalsa20Block(state::SalsaState)
     return Salsa20Block(state)
 end
 

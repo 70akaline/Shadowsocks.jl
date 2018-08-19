@@ -49,6 +49,10 @@ end
     end
 end
 
+struct SSError <: Exception
+    msg::AbstractString
+end
+
 mutable struct SSConfig
     host::Sockets.IPAddr
     port::Integer

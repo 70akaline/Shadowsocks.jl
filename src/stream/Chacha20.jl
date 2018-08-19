@@ -52,12 +52,12 @@ function newOChachaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt
     return state
 end
 
-function UpdateChachaState(state::ChachaState, counter::UInt32)
+@inline function UpdateChachaState(state::ChachaState, counter::UInt32)
     state[13] = counter
     return state
 end
 
-function UpdateOChachaState(state::ChachaState, counter::UInt64)
+@inline function UpdateOChachaState(state::ChachaState, counter::UInt64)
     state[13:14] = UInt32[counter & 0xffff; counter >> 32]
     return state
 end
@@ -108,11 +108,11 @@ function HChacha20Block(s::ChachaState)
     return s
 end
 
-function XChacha20Block(state::ChachaState)
+@inline function XChacha20Block(state::ChachaState)
     return Chacha20Block(state)
 end
 
-function OChacha20Block(state::ChachaState)
+@inline function OChacha20Block(state::ChachaState)
     return Chacha20Block(state)
 end
 
