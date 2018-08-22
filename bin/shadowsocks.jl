@@ -9,7 +9,7 @@ function main(args)
     s = ArgParseSettings(description = "This is a julia implementation of shadowsocks",
         commands_are_required = false,
         version = "0.0.2",
-        add_version = false)
+        add_version = true)
 
     @add_arg_table s begin
         "--server", "-s"
@@ -44,18 +44,17 @@ function main(args)
                 main(String["--help"])
             end
         else
-            ip = parse(Sockets.IPAddr, parsed_args["server"])
             if haskey(parsed_args, "listen")
-                config = SSClient(
-                    ip, 
+                config = Shadowsocks.SSClient(
+                    parse(Sockets.IPAddr, parsed_args["server"]), 
                     parsed_args["port"], 
                     parsed_args["listen"], 
                     uppercase(parsed_args["method"]), 
                     parsed_args["password"]
                 )
             else
-                config = SSServer(
-                    ip, 
+                config = Shadowsocks.SSServer(
+                    parse(Sockets.IPAddr, parsed_args["server"]), 
                     parsed_args["port"], 
                     uppercase(parsed_args["method"]), 
                     parsed_args["password"]
@@ -64,26 +63,32 @@ function main(args)
         end
     end
 
-    if config isa Array{Shadowsocks.SSConfig}
-        Shadowsocks.@terminal("running shadowsocks client")
-        run(config)
-    elseif config isa String
-        ch = Channel{Dict{String, Any}}(1)
-        @async while true
-            put!(ch, Shadowsocks.readConfigFile(config))
-            watch_file(config, -1)
-        end
+    if config isa String
+        if (local configs = Shadowsocks.readConfigFile(config); configs isa Array{Shadowsocks.SSConfig})
+            Shadowsocks.@terminal("running shadowsocks client")
+            Shadowsocks.run(configs)
+        elseif configs isa Dict{String, Any}
+            ch = Channel{Dict{String, Any}}(1)
+            put!(ch, configs)
 
+            @async while true # watch config file
+                watch_file(config, -1)
+                put!(ch, Shadowsocks.readConfigFile(config))
+            end
+
+            Shadowsocks.@terminal("running shadowsocks server")
+            Shadowsocks.@terminal("watching config file - $config")
+            Shadowsocks.run(ch)
+        end
+    elseif config isa Shadowsocks.SSConfig && config.lisPort == nothing
         Shadowsocks.@terminal("running shadowsocks server")
-        Shadowsocks.@terminal("watching config file - $config")
-        run(ch)
-    elseif config.lisPort == nothing
-        Shadowsocks.@terminal("running shadowsocks server")
-        run(config, true)
-    else
+        Shadowsocks.runServer(config)
+    elseif config isa Shadowsocks.SSConfig && config.lisPort != nothing
         Shadowsocks.@terminal("running shadowsocks client")
-        run(config, false)
+        Shadowsocks.runClient(config)
     end
+
+    main(String["--help"])
 end
 
 main(ARGS)

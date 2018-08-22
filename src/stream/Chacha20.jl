@@ -1,7 +1,7 @@
 
 module Chacha20
 
-using ..Common
+using ..Common: @lrot, @little, @arraylittle!
 
 const ChachaKeyLen = 32
 const ChachaNonceLen = 12
@@ -13,9 +13,9 @@ function newChachaState(key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
     state[13] = counter
-    state[14:16] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 3))
+    state[14:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 3))
 
     return state
 end
@@ -24,8 +24,8 @@ function newHChachaState(key::Vector{UInt8}, nonce::Vector{UInt8})
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    state[13:16] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
+    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[13:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
 
     return state
 end
@@ -36,7 +36,7 @@ function newXChachaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt
     state[5:12] = state[[1:4; 13:16]]
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
     state[13:14] = UInt32[counter & 0xffff; counter >> 32]
-    state[15:16] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
+    state[15:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
 
     return state
 end
@@ -45,9 +45,9 @@ function newOChachaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
     state[13:14] = UInt32[counter & 0xffff; counter >> 32]
-    state[15:16] = Common.little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
+    state[15:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
 
     return state
 end
@@ -64,10 +64,10 @@ end
 
 macro QuaterRound(s, x, y, z, w)
     quote
-        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = Common.@lrot($(esc(s))[$(esc(w))], 16)
-        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = Common.@lrot($(esc(s))[$(esc(y))], 12)
-        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = Common.@lrot($(esc(s))[$(esc(w))], 8 )
-        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = Common.@lrot($(esc(s))[$(esc(y))], 7 )
+        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = @lrot($(esc(s))[$(esc(w))], 16)
+        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = @lrot($(esc(s))[$(esc(y))], 12)
+        $(esc(s))[$(esc(x))] += $(esc(s))[$(esc(y))]; $(esc(s))[$(esc(w))] ⊻= $(esc(s))[$(esc(x))]; $(esc(s))[$(esc(w))] = @lrot($(esc(s))[$(esc(w))], 8 )
+        $(esc(s))[$(esc(z))] += $(esc(s))[$(esc(w))]; $(esc(s))[$(esc(y))] ⊻= $(esc(s))[$(esc(z))]; $(esc(s))[$(esc(y))] = @lrot($(esc(s))[$(esc(y))], 7 )
     end
 end
 
@@ -87,7 +87,7 @@ function Chacha20Block(state::ChachaState)
     end
 
     s += state
-    s = Common.little!(s)
+    @arraylittle!(s)
 
     return reinterpret(UInt8, s)
 end
