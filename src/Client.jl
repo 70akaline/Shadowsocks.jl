@@ -2,40 +2,7 @@ module Client # client
 
 using Sockets
 
-using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy
-
-@inline function init_read(ssConn::SSConnection) # Client
-    saltlen = max(16, ssConn.cipher.keylen)
-
-    salt = Array{UInt8}(undef, saltlen)
-    nbytes, err = read(ssConn.conn, salt, saltlen)
-    if err != nothing
-        return err
-    end
-
-    ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-    if err != nothing
-        return err
-    end
-
-    return nothing
-end
-
-@inline function init_write(ssConn::SSConnection)
-    saltlen = max(16, ssConn.cipher.keylen)
-
-    salt = rand(UInt8, saltlen)
-    ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
-    if err != nothing
-        return err
-    end
-
-    if write(ssConn.conn, salt, saltlen) != nothing
-        return err
-    end
-
-    return nothing
-end
+using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy, init_write, init_read
 
 @inline function handShake(conn::TCPSocket, buff::Array{UInt8})
     nbytes, err = read(conn, buff)

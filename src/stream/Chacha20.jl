@@ -1,7 +1,7 @@
 
 module Chacha20
 
-using ..Common: @lrot, @little, @arraylittle!
+using ..Common: @lrot, @arraylittle, @arraylittle!
 
 const ChachaKeyLen = 32
 const ChachaNonceLen = 12
@@ -13,9 +13,9 @@ function newChachaState(key::Vector{UInt8}, counter::UInt32, nonce::Vector{UInt8
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[5:12] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
     state[13] = counter
-    state[14:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 3))
+    state[14:16] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 3))
 
     return state
 end
@@ -24,8 +24,8 @@ function newHChachaState(key::Vector{UInt8}, nonce::Vector{UInt8})
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    state[13:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
+    state[5:12] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[13:16] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
 
     return state
 end
@@ -35,8 +35,8 @@ function newXChachaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt
 
     state[5:12] = state[[1:4; 13:16]]
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[13:14] = UInt32[counter & 0xffff; counter >> 32]
-    state[15:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
+    state[13:14] = UInt32[counter & 0xffffffff; counter >> 32]
+    state[15:16] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
 
     return state
 end
@@ -45,9 +45,9 @@ function newOChachaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt
     state = ChachaState(undef, 16)
 
     state[1:4] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    state[5:12] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    state[13:14] = UInt32[counter & 0xffff; counter >> 32]
-    state[15:16] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
+    state[5:12] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    state[13:14] = UInt32[counter & 0xffffffff; counter >> 32]
+    state[15:16] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
 
     return state
 end
@@ -58,7 +58,7 @@ end
 end
 
 @inline function UpdateOChachaState(state::ChachaState, counter::UInt64)
-    state[13:14] = UInt32[counter & 0xffff; counter >> 32]
+    state[13:14] = UInt32[counter & 0xffffffff; counter >> 32]
     return state
 end
 

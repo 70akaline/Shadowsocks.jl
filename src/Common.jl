@@ -94,6 +94,40 @@ end
     end
 end
 
+@inline function init_read(ssConn::SSConnection) # Server
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    salt = Array{UInt8}(undef, saltlen)
+    nbytes, err = read(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
+    end
+
+    ssConn.keyDecrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
+    end
+
+    return nothing
+end
+
+@inline function init_write(ssConn::SSConnection) # Server
+    saltlen = max(16, ssConn.cipher.keylen)
+
+    salt = rand(UInt8, saltlen)
+    ssConn.keyEncrypt, err = gensubkey(salt, ssConn.cipher.key, ssConn.cipher.keylen)
+    if err != nothing
+        return err
+    end
+
+    err = write(ssConn.conn, salt, saltlen)
+    if err != nothing
+        return err
+    end
+
+    return nothing
+end
+
 struct Error <: Exception
     msg::AbstractString
 end

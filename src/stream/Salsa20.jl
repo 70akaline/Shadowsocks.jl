@@ -1,7 +1,7 @@
 
 module Salsa20
 
-using ..Common: @lrot, @little, @arraylittle!
+using ..Common: @lrot, @arraylittle, @arraylittle!
 
 const SalsaKeylen = 32
 const SalsaNonceLen = 8
@@ -12,9 +12,9 @@ function newSalsaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt8}
     s = SalsaState(undef, 16)
 
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    s[[2:5; 12:15]] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    s[9:10] = UInt32[counter & 0xffff; counter >> 32]
-    s[7:8] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
+    s[[2:5; 12:15]] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    s[9:10] = UInt32[counter & 0xffffffff; counter >> 32]
+    s[7:8] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 2))
 
     return s
 end
@@ -23,8 +23,8 @@ function newHSalsaState(key::Vector{UInt8}, nonce::Vector{UInt8})
     s = SalsaState(undef, 16)
 
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    s[[2:5; 12:15]] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
-    s[7:10] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
+    s[[2:5; 12:15]] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(key)), 8))
+    s[7:10] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce)), 4))
 
     return s
 end
@@ -34,14 +34,14 @@ function newXSalsaState(key::Vector{UInt8}, counter::UInt64, nonce::Vector{UInt8
 
     s[[2:5; 12:15]] = s[[1; 6; 11; 16; 7; 8; 9; 10]]
     s[[1; 6; 11; 16]] = [0x61707865; 0x3320646e; 0x79622d32; 0x6b206574]
-    s[9:10] = UInt32[counter & 0xffff; counter >> 32]
-    s[7:8] = @little(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
+    s[9:10] = UInt32[counter & 0xffffffff; counter >> 32]
+    s[7:8] = @arraylittle(unsafe_wrap(Array{UInt32}, Ptr{UInt32}(pointer(nonce) + 16), 2))
 
     return s
 end
 
 @inline function UpdateSalsaState(state::SalsaState, counter::UInt64)
-    state[9:10] = UInt32[counter & 0xffff; counter >> 32]
+    state[9:10] = UInt32[counter & 0xffffffff; counter >> 32]
     return state
 end
 
