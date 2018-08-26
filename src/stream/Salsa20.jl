@@ -104,13 +104,13 @@ function Salsa20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt64
 
     nblock > 0x0000000000000000 && for i in 0x0000000000000000:nblock-0x0000000000000001
         keystream = Salsa20Block(UpdateSalsaState(state, counter+i))
-        @inbounds to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
+        @inbounds to[i * 64 + 1 : i * 64 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i * 64, 64)
     end
 
     left = len % 64
     if left != 0
         keystream = Salsa20Block(UpdateSalsaState(state, counter+nblock))
-        @inbounds to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
+        @inbounds to[nblock * 64 + 1 : nblock * 64 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock * 64, left)
     end
 
     return len
@@ -131,13 +131,13 @@ function XSalsa20Calculate(to::Vector{UInt8}, key::Vector{UInt8}, counter::UInt6
 
     nblock > 0x0000000000000000 && for i in 0x0000000000000000:nblock-0x0000000000000001
         keystream = XSalsa20Block(UpdateSalsaState(state, counter+i))
-        @inbounds to[i << 6 + 1 : i << 6 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i << 6, 64)
+        @inbounds to[i * 64 + 1 : i * 64 + 64] = keystream .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + i * 64, 64)
     end
 
     left = len % 64
     if left != 0
         keystream = XSalsa20Block(UpdateSalsaState(state, counter+nblock))
-        @inbounds to[nblock << 6 + 1 : nblock << 6 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock << 6, left)
+        @inbounds to[nblock * 64 + 1 : nblock * 64 + left] = unsafe_wrap(Array{UInt8}, pointer(keystream), left) .⊻ unsafe_wrap(Array{UInt8}, ptrFrom + nblock * 64, left)
     end
 
     return len

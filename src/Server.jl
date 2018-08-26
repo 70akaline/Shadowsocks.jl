@@ -8,14 +8,14 @@ using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, w
     host, port = nothing, nothing
     if buff[1] == 0x01
         host = IPv4(ntoh(unsafe_load(Ptr{UInt32}(pointer(buff) + 1))))
-        port = UInt16(buff[6]) << 8 | buff[7]
+        port = UInt16(buff[6]) * 256 + buff[7]
     elseif buff[1] == 0x03
         len = buff[2]
         host = String(unsafe_wrap(Array{UInt8}, pointer(buff) + 2, len))
-        port = UInt16(buff[len+3]) << 8 | buff[len+4]
+        port = UInt16(buff[len+3]) * 256 + buff[len+4]
     elseif buff[1] == 0x04
         host = IPv6(ntoh(unsafe_load(Ptr{UInt128}(pointer(buff) + 1))))
-        port = UInt16(buff[18]) << 8 | buff[19]
+        port = UInt16(buff[18]) * 256 + buff[19]
     end
 
     return host, port, nothing

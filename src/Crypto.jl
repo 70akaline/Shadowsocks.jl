@@ -11,7 +11,7 @@ end
 
 macro lebytes(x, n)
     quote
-        UInt8[$(esc(x)) >> (i << 3) & 0xff for i in 0:$(esc(n))-1]
+        UInt8[$(esc(x)) >> (i * 8) & 0xff for i in 0:$(esc(n))-1]
     end
 end
 

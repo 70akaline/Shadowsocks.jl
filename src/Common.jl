@@ -295,7 +295,7 @@ end
     end
     increase(ssConn.ivDecrypt)
 
-    nbytes, err = read_stream(ssConn, buff, UInt16(buff[1]) << 8 + buff[2] + ssConn.cipher.taglen)
+    nbytes, err = read_stream(ssConn, buff, UInt16(buff[1]) * 256 + buff[2] + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
     end
