@@ -15,6 +15,7 @@ include("Crypto.jl")
 include("Common.jl")
 include("Server.jl")
 include("Client.jl")
+include("Obfs.jl")
 
 using .Common: @terminal, SSConfig, readConfigFile, parseURI
 using .Server: runServer

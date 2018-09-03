@@ -379,4 +379,19 @@ function ioCopy(from::TCPSocket, to::SSConnection)
     end
 end
 
+function ioCopy(from::TCPSocket, to::TCPScoket)
+    buff = Array{UInt8}(undef, MaxSize)
+    while true
+        nbytes, err = read(from, buff)
+        if err != nothing
+            break
+        end
+
+        err = write(to, buff, nbytes)
+        if err != nothing
+            break
+        end
+    end
+end
+
 end # module

@@ -19,8 +19,8 @@ end
 end
 
 function multi_poly1305(x::UInt384, y::UInt384, z::UInt384)
-    t = UInt128[x.m & 0xffffffffffffffff, x.l >> 64, x.l & 0xffffffffffffffff]
-    b = UInt128[y.m & 0xffffffffffffffff, y.l >> 64, y.l & 0xffffffffffffffff]
+    t = UInt128[x.m, x.l >> 64, x.l & 0xffffffffffffffff]
+    b = UInt128[y.m, y.l >> 64, y.l & 0xffffffffffffffff]
 
     z.h = 0x00
     z.m = 0x00

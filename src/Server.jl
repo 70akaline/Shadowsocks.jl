@@ -46,13 +46,13 @@ end
     while true
         buff = Array{UInt8}(undef, 272)
 
-        if init_read(ssConn) != nothing && break
+        if init_read(ssConn) != nothing
             break
         end
 
         ~, err = read(ssConn, buff)
         if err != nothing
-            return err
+            break
         end
 
         remote, err = connectRemote(buff)

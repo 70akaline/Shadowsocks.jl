@@ -68,7 +68,7 @@ end
 
         err = write(ssConn, buff, nbytes)
         if err != nothing
-            return err
+            break
         end
 
         @async ioCopy(conn, ssConn)
