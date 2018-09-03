@@ -6,7 +6,7 @@ module tls
 using Dates
 using Sockets
 
-import Base: accept
+import Sockets: accept
 
 using ....Crypto.Chacha20: Chacha20Encrypt, Chacha20Decrypt
 using ....Crypto.HKDF: hkdf
