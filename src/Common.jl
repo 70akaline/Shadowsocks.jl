@@ -163,7 +163,11 @@ function parseURI(text::String)
         return nothing, "Invalid Config"
     end
 
-    r = match(r"ss://(?<method>[\w-]+):(?<password>\w+)@(?<ip>[0-9\.]*):(?<port>\d+)", text)
+    r = try 
+        match(r"ss://(?<method>[\w-]+):(?<password>\w+)@(?<ip>[0-9\.]*):(?<port>\d+)", text)
+    catch err 
+        return nothing, err
+    end
 
     if r["ip"] == ""
         return SSServer(getipaddr(), parse(UInt16, r["port"]), uppercase(r["method"]), r["password"]), nothing
@@ -187,7 +191,7 @@ end
 #         "password":"imgk0000"
 #     }
 # }
-
+# 
 # {
 #     "lisPort":1080,
 #     "Server1":{

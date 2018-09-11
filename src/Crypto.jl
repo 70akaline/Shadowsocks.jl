@@ -9,9 +9,15 @@ macro lrot(x, n)
     end
 end
 
-macro lebytes(x, n)
-    quote
-        UInt8[$(esc(x)) >> (i * 8) & 0xff for i in 0:$(esc(n))-1]
+macro LittleEndianBytes(x)
+    if Base.ENDIAN_BOM == 0x04030201
+        quote
+            reinterpret(UInt8, [$(esc(x)); ])
+        end
+    elseif Base.ENDIAN_BOM == 0x01020304
+        quote
+            reinterpret(UInt8, [bswap($(esc(x))); ])
+        end
     end
 end
 

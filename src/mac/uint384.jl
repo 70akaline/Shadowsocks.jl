@@ -68,14 +68,14 @@ end
 
 function or(x::UInt384, y::UInt384, z::UInt384)
     z.h = x.h | y.h
-    z.h = x.m | y.m
+    z.m = x.m | y.m
     z.l = x.l | y.l
     z
 end
 
 function and(x::UInt384, y::UInt384, z::UInt384)
     z.h = x.h & y.h
-    z.h = x.m & y.m
+    z.m = x.m & y.m
     z.l = x.l & y.l
     z
 end

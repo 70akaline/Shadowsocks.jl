@@ -40,7 +40,7 @@ end
     isopen(io.conn)
 end
 
-@inline function readbytes(io::TLSConnection, buff::Array{UInt8}, bytes::Integer)
+@inline function readbytes!(io::TLSConnection, buff::Array{UInt8}, bytes::Integer)
     readbytes!(io.conn, buff, nbytes)
 end
 
