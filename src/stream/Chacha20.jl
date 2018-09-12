@@ -71,7 +71,7 @@ macro QuaterRound(s, x, y, z, w)
     end
 end
 
-function Chacha20Block(state::ChachaState)
+function Chacha20Block(state::ChachaState)::Array{UInt8}
     s = deepcopy(state)
 
     for i in 1:10

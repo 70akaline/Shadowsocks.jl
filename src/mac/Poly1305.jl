@@ -3,7 +3,7 @@ module Poly1305
 
 include("uint384.jl")
 
-using .uint384: UInt384, minus
+using .uint384: UInt384, minus, and
 using ..Common: @little!, @LittleEndianBytes
 
 @inline function add_poly1305_l(x::UInt384, y::UInt384, z::UInt384)
@@ -66,17 +66,36 @@ const n = UInt384(0x00, 0x04, 0x00)
 const m = UInt384(0x00, 0x03, typemax(UInt128))
 const o = UInt384(0x00, 0x00, 0x05)
 
-function modulo_poly1305_p(x::UInt384)
+@inline function shiftright_poly1305_130(x::UInt384)
+    x.l = x.m >> 0x02 | x.h << 0x007e
+    x.m = x.h >> 0x02
+    x.h = 0x00
+    x
+end
+
+@inline function shiftleft_poly1305_2(x::UInt384)
+    x.h = x.h << 0x02 | x.m >> 0x7e
+    x.m = x.m << 0x02 | x.l >> 0x7e
+    x.l = x.l << 0x02
+    x
+end
+
+@inline function multi_poly1305_0x05(x::UInt384)
+    add_poly1305_l(x, shiftleft_poly1305_2(UInt384(x.h, x.m, x.l)), x)
+    x
+end
+
+@inline function modulo_poly1305_p(x::UInt384)
     while uint384.more(x, n)
         z = UInt384(x.h, x.m, x.l)
         w = UInt384(x.h, x.m, x.l)
 
-        uint384.shiftright(z, 0x0082)
-        uint384.multi(z, o, z)
+        shiftright_poly1305_130(z)
+        multi_poly1305_0x05(z)
 
         uint384.and(w, m, w)
 
-        uint384.add(z, w, x)
+        add_poly1305_l(z, w, x)
     end
 
     if !(uint384.less(x, p))
@@ -87,7 +106,11 @@ function modulo_poly1305_p(x::UInt384)
 end
 
 const Poly1305KeyLen = 32
-const p = minus(UInt384(0x00, 0x04, 0x00), 0x05)
+const p = UInt384(
+    0x00000000000000000000000000000000, 
+    0x00000000000000000000000000000003, 
+    0xfffffffffffffffffffffffffffffffb
+)
 
 function Poly1305Cal(r::UInt384, a::UInt384, msg::Vector{UInt8}, isOver::Bool)::UInt384
     len = length(msg)

@@ -54,7 +54,7 @@ macro QuaterRound(s, x, y, z, w)
     end
 end
 
-function Salsa20Block(state::SalsaState)
+function Salsa20Block(state::SalsaState)::Array{UInt8}
     s = deepcopy(state)
 
     for i in 1:10
