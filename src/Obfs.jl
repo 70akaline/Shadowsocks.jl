@@ -102,8 +102,7 @@ end
 end
 
 mutable struct RandomSet
-    isready::Bool
-    ready::Condition
+    lock::ReentrantLock
     set::Set{Array{UInt8}}
 end
 
@@ -112,45 +111,21 @@ struct Error <: Exception
 end
 
 function add(random::Array{UInt8}, set::RandomSet)
-    if isready
-        isready = false
-    else
-        wait(set.ready)
-        isready = false
-    end
-
+    lock(random.lock)
     union!(set, [random, ])
-
-    isready = true
-    notify(set.ready)
+    unlock(random.lock)
 end
 
 function clear(set::RandomSet)
-    if isready
-        isready = false
-    else
-        wait(set.ready)
-        isready = false
-    end
-
+    lock(random.lock)
     set.set = Set{Array{UInt8}}()
-
-    isready = true
-    notify(set.ready)
+    unlock(random.lock)
 end
 
 function hasRandom(random::Array{UInt8}, set::RandomSet)::Bool
-    if isready
-        isready = false
-    else
-        wait(set.ready)
-        isready = false
-    end
-
+    lock(random.lock)
     x = random in set.set
-
-    isready = true
-    notify(set.ready)
+    unlock(random.lock)
 
     x
 end
@@ -253,7 +228,7 @@ function accept(server::Sockets.TCPServer, config::TLSConfig)::TCPSocket
     if @isdefined set
 
     else
-        global set = RandomSet(true, Condition(), Set{Array{UInt8}}())
+        global set = RandomSet(ReentrantLock(), Set{Array{UInt8}}())
         @async while true
             sleep(3600)
             clear(set)
