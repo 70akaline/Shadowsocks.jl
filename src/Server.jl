@@ -2,7 +2,7 @@ module Server # server
 
 using Sockets
 
-using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy, init_read, init_write
+using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy, init_read, init_write, eof
 
 @inline function gethost(buff::Array{UInt8})
     host, port = nothing, nothing
@@ -60,7 +60,7 @@ end
             break
         end
 
-        @async ioCopy(ssConn, remote)
+        @async ioCopy(ssConn, remote) # First
 
         if init_write(ssConn) != nothing
             break
@@ -68,6 +68,11 @@ end
 
         buff = nothing
         ioCopy(remote, ssConn)
+
+        close(ssConn)
+        while !eof(ssConn)
+            sleep(1)
+        end
 
         break
     end

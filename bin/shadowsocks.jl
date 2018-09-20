@@ -92,3 +92,5 @@ function main(args)
 end
 
 main(ARGS)
+# main(["-c", "ss://chacha20-poly1305-ietf:imgk0000@:8388"])
+# main(["-c", "ss://chacha20-poly1305-ietf:imgk0000@0.0.0.0:8388"])

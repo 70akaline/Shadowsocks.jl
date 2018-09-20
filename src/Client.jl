@@ -2,7 +2,7 @@ module Client # client
 
 using Sockets
 
-using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy, init_write, init_read
+using ..Common: Error, SSConfig, Cipher, SSConnection, close, gensubkey, read, write, ioCopy, init_write, init_read, eof
 
 @inline function handShake(conn::TCPSocket, buff::Array{UInt8})
     nbytes, err = read(conn, buff)
@@ -79,7 +79,12 @@ end
         end
 
         buff = nothing
-        ioCopy(ssConn, conn)
+        ioCopy(ssConn, conn) # First
+
+        close(conn)
+        while !eof(conn)
+            sleep(1)
+        end
 
         break
     end

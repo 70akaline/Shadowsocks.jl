@@ -10,6 +10,8 @@ import Base.isopen
 import Base.close
 import Base.read
 import Base.write
+import Base.eof
+import Base.bytesavailable
 
 const Bytes = Array{UInt8}
 const MaxSize = 0x3FFF
@@ -75,6 +77,14 @@ mutable struct SSConnection
     tagCache::Union{Array{UInt8}, Nothing}
     keyDecrypt::Union{Array{UInt8}, Nothing}
     keyEncrypt::Union{Array{UInt8}, Nothing}
+end
+
+@inline function eof(ssConn::SSConnection)
+    return eof(ssConn.conn)
+end
+
+@inline function bytesavailable(ssConn::SSConnection)
+    return bytesavailable(ssConn.conn)
 end
 
 @inline function close(ssConn::SSConnection)
@@ -249,40 +259,44 @@ end
     return subkey, nothing
 end
 
-@inline function read(io::TCPSocket, buff::Bytes)
+@inline function read(io::TCPSocket, buff::Array{UInt8})
     try
-        eof(io)
+        if eof(io)
+            return nothing, Error("Connection Ended")
+        end
     catch err
         return nothing, err
     end
 
     nbytes = min(MaxSize, bytesavailable(io))
-    isopen(io) ? try 
+    try 
         readbytes!(io, buff, nbytes)
-    catch err
-        return nothing, err
-    end : return nothing, Error("Connection Closed")
-
-    return nbytes, nothing
-end
-
-@inline function read(io::TCPSocket, buff::Bytes, nbytes::Integer)
-    try
-        eof(io)
     catch err
         return nothing, err
     end
 
-    isopen(io) ? try 
+    return nbytes, nothing
+end
+
+@inline function read(io::TCPSocket, buff::Array{UInt8}, nbytes::Integer)
+    try
+        if eof(io)
+            return nothing, Error("Connection Ended")
+        end
+    catch err
+        return nothing, err
+    end
+
+    try 
         readbytes!(io, buff, nbytes)
     catch err 
         return nothing, err
-    end : return nothing, Error("Connection Closed")
+    end
 
     return nbytes, nothing
 end
 
-@inline function write(io::TCPSocket, buff::Bytes, nbytes::Integer)
+@inline function write(io::TCPSocket, buff::Array{UInt8}, nbytes::Integer)
     isopen(io) ? try 
         write(io, unsafe_wrap(Array{UInt8}, pointer(buff), nbytes)) 
     catch err 
@@ -292,7 +306,7 @@ end
     return nothing
 end
 
-@inline function read(ssConn::SSConnection, buff::Bytes)
+@inline function read(ssConn::SSConnection, buff::Array{UInt8})
     nbytes, err = read_stream(ssConn, buff, 2 + ssConn.cipher.taglen)
     if err != nothing
         return nothing, err
@@ -308,7 +322,7 @@ end
     return nbytes, nothing
 end
 
-@inline function write(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+@inline function write(ssConn::SSConnection, buff::Array{UInt8}, nbytes::Integer)
     ssConn.tagCache[1:2] = [UInt8(nbytes >> 8); UInt8(nbytes & 0xff)]
     err = write_stream(ssConn, ssConn.tagCache, 2)
     if err != nothing
@@ -325,7 +339,7 @@ end
     return nothing
 end
 
-@inline function read_stream(ssConn::SSConnection, buff::Bytes, n::Integer)
+@inline function read_stream(ssConn::SSConnection, buff::Array{UInt8}, n::Integer)
     nbytes, err = read(ssConn.conn, buff, n)
     if err != nothing
         return nothing, err
@@ -339,7 +353,7 @@ end
     return nbytes, nothing
 end
 
-@inline function write_stream(ssConn::SSConnection, buff::Bytes, nbytes::Integer)
+@inline function write_stream(ssConn::SSConnection, buff::Array{UInt8}, nbytes::Integer)
     nbytes, err = ssConn.cipher.encrypt(buff, ssConn.keyEncrypt, ssConn.ivEncrypt, unsafe_wrap(Array{UInt8}, pointer(buff), nbytes), UInt8[])
     if err != nothing
         return err
