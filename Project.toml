@@ -1,5 +1,6 @@
 name = "Shadowsocks"
 uuid = "831abb1c-f6c5-4e69-be06-5852bd78f88d"
+authors = ["John Xiong <imgk@mail.ustc.edu.cn>"]
 version = "v0.0.2"
 
 [deps]

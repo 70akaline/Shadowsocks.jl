@@ -4,7 +4,7 @@ using Sockets
 using Dates
 using JSON
 
-using ..Crypto
+using Crypto
 
 import Base.isopen
 import Base.close

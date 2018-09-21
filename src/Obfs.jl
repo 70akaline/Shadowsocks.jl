@@ -9,8 +9,8 @@ import Base.read
 import Base.write
 import Base.readbytes!
 
-using ..Crypto.Chacha20: Chacha20Encrypt, Chacha20Decrypt
-using ..Crypto.HKDF: hkdf
+using Crypto.Chacha20: Chacha20Encrypt, Chacha20Decrypt
+using Crypto.HKDF: hkdf
 using ..Common: ioCopy
 
 import ..Common.read

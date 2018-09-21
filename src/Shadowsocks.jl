@@ -11,7 +11,6 @@ __precompile__(false)
 #
 module Shadowsocks
 
-include("Crypto.jl")
 include("Common.jl")
 include("Server.jl")
 include("Client.jl")
