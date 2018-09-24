@@ -13,7 +13,7 @@ function main(args)
 
     @add_arg_table s begin
         "--server", "-s"
-            help = "shadowsocks sever"
+            help = "shadowsocks server"
         "--port", "-p"
             help = "shadowsocks server port"
             arg_type = Int
